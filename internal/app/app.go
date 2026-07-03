@@ -51,6 +51,7 @@ func newRootCmd() *cobra.Command {
 		return cf.resolve()
 	}
 	cmd.AddCommand(newContextCmd(of, cf))
+	cmd.AddCommand(newStatusCmd(of, cf))
 	cmd.AddCommand(newMCPCmd(cf))
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newCompletionCmd())

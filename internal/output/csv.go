@@ -17,6 +17,10 @@ import (
 func renderCSV(w io.Writer, v any) error {
 	cw := csv.NewWriter(w)
 	switch c := v.(type) {
+	case spur.Status:
+		return writeStatusCSV(cw, c)
+	case *spur.Status:
+		return writeStatusCSV(cw, *c)
 	case spur.IPContext:
 		return writeIPContextCSV(cw, c)
 	case *spur.IPContext:
@@ -26,6 +30,28 @@ func renderCSV(w io.Writer, v any) error {
 	default:
 		return fmt.Errorf("csv output is not supported for %T", v)
 	}
+}
+
+// statusCSVHeader mirrors the /status JSON fields so a scripted `spur status
+// --format csv` maps one-to-one onto the API shape.
+var statusCSVHeader = []string{"active", "queriesRemaining", "serviceTier"}
+
+// writeStatusCSV writes the status header row and a single record. The active
+// flag is emitted as a bare true/false so the column stays machine-parseable,
+// unlike the styled ●/○ marker used in the text report.
+func writeStatusCSV(cw *csv.Writer, s spur.Status) error {
+	if err := cw.Write(statusCSVHeader); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+	if err := cw.Write([]string{
+		strconv.FormatBool(s.Active),
+		strconv.Itoa(s.QueriesRemaining),
+		s.ServiceTier,
+	}); err != nil {
+		return fmt.Errorf("write csv record: %w", err)
+	}
+	cw.Flush()
+	return cw.Error()
 }
 
 // ipContextCSVHeader is the column order shared by the single-value and batch

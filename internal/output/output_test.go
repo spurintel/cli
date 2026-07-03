@@ -210,6 +210,87 @@ func TestRenderTextBatch(t *testing.T) {
 	}
 }
 
+// sampleStatus is a representative active-token status.
+func sampleStatus() spur.Status {
+	return spur.Status{Active: true, QueriesRemaining: 12345, ServiceTier: "online"}
+}
+
+func TestRenderStatusJSON(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatJSON, false, sampleStatus()); err != nil {
+		t.Fatalf("Render json: %v", err)
+	}
+	var got spur.Status
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("status json is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got != sampleStatus() {
+		t.Errorf("decoded status = %+v, want %+v", got, sampleStatus())
+	}
+}
+
+func TestRenderStatusCSV(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatCSV, false, sampleStatus()); err != nil {
+		t.Fatalf("Render csv: %v", err)
+	}
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("status csv does not parse: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("status csv records = %d, want 2 (header + row)", len(records))
+	}
+	if !slices.Equal(records[0], []string{"active", "queriesRemaining", "serviceTier"}) {
+		t.Errorf("status csv header = %v", records[0])
+	}
+	if !slices.Equal(records[1], []string{"true", "12345", "online"}) {
+		t.Errorf("status csv row = %v, want [true 12345 online]", records[1])
+	}
+}
+
+func TestRenderStatusTextNoColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, false, sampleStatus()); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, esc) {
+		t.Errorf("--no-color status text contains ANSI escape codes: %q", out)
+	}
+	for _, want := range []string{"Token Status", "Active", "active", "Queries Remaining", "12345", "Service Tier", "online"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status text missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderStatusTextInactive(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	st := spur.Status{Active: false, QueriesRemaining: 0, ServiceTier: "online"}
+	if err := Render(&buf, FormatText, false, st); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "inactive") {
+		t.Errorf("inactive status text missing 'inactive' marker\n%s", out)
+	}
+}
+
+func TestRenderStatusTextColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, true, sampleStatus()); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	if !strings.Contains(buf.String(), esc) {
+		t.Errorf("colored status text has no ANSI escape codes: %q", buf.String())
+	}
+}
+
 func TestRenderUnknownFormat(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
