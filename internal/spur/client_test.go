@@ -19,6 +19,41 @@ func TestReadBodyRejectsOversizeResponses(t *testing.T) {
 	}
 }
 
+func TestGetIPContextSendsQueryArgs(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		opts   IPContextOptions
+		wantDT string // "" means the dt arg must be absent
+	}{
+		{name: "none", opts: IPContextOptions{}},
+		{name: "date", opts: IPContextOptions{DT: "20240101"}, wantDT: "20240101"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.Query().Get("dt"); got != tc.wantDT {
+					t.Errorf("dt = %q, want %q", got, tc.wantDT)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"ip":"8.8.8.8"}`))
+			}))
+			defer srv.Close()
+
+			client := NewClient("token")
+			client.Base = srv.URL
+
+			if _, _, err := client.GetIPContext(context.Background(), "8.8.8.8", tc.opts); err != nil {
+				t.Fatalf("GetIPContext: %v", err)
+			}
+		})
+	}
+}
+
 func TestGetStatusReturnsSanitizedAPIError(t *testing.T) {
 	t.Parallel()
 

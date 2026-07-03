@@ -15,6 +15,8 @@ import (
 	"io"
 
 	"golang.org/x/term"
+
+	"github.com/spurintel/cli/internal/spur"
 )
 
 // Format is a supported output encoding.
@@ -95,9 +97,19 @@ func Render(w io.Writer, format Format, color bool, v any) error {
 }
 
 // renderJSON writes v as newline-delimited JSON: compact, one object per line,
-// so a batch pipes straight into jq and a single value is a single line.
+// so a batch pipes straight into jq and a single value is a single line. A slice
+// of contexts is emitted as one object per line (NDJSON), not a JSON array, so
+// the single-value and batch outputs share the same line-oriented shape.
 func renderJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
+	if batch, ok := v.([]spur.IPContext); ok {
+		for i := range batch {
+			if err := enc.Encode(batch[i]); err != nil {
+				return fmt.Errorf("encode json: %w", err)
+			}
+		}
+		return nil
+	}
 	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("encode json: %w", err)
 	}
