@@ -21,32 +21,61 @@ func renderCSV(w io.Writer, v any) error {
 		return writeIPContextCSV(cw, c)
 	case *spur.IPContext:
 		return writeIPContextCSV(cw, *c)
+	case []spur.IPContext:
+		return writeIPContextCSVBatch(cw, c)
 	default:
 		return fmt.Errorf("csv output is not supported for %T", v)
 	}
 }
 
-func writeIPContextCSV(cw *csv.Writer, c spur.IPContext) error {
-	if err := cw.Write([]string{
-		"ip",
-		"infrastructure",
-		"organization",
-		"as.number",
-		"as.organization",
-		"location.city",
-		"location.state",
-		"location.country",
-		"client.count",
-		"client.countries",
-		"client.types",
-		"client.behaviors",
-		"client.proxies",
-		"risks",
-		"services",
-	}); err != nil {
+// ipContextCSVHeader is the column order shared by the single-value and batch
+// CSV writers, so a batch is one header row followed by one record per context.
+var ipContextCSVHeader = []string{
+	"ip",
+	"infrastructure",
+	"organization",
+	"as.number",
+	"as.organization",
+	"location.city",
+	"location.state",
+	"location.country",
+	"client.count",
+	"client.countries",
+	"client.types",
+	"client.behaviors",
+	"client.proxies",
+	"risks",
+	"services",
+}
+
+// writeIPContextCSVBatch writes the header once, then one record per context.
+func writeIPContextCSVBatch(cw *csv.Writer, cs []spur.IPContext) error {
+	if err := cw.Write(ipContextCSVHeader); err != nil {
 		return fmt.Errorf("write csv header: %w", err)
 	}
-	if err := cw.Write([]string{
+	for i := range cs {
+		if err := cw.Write(ipContextCSVRecord(cs[i])); err != nil {
+			return fmt.Errorf("write csv record: %w", err)
+		}
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+func writeIPContextCSV(cw *csv.Writer, c spur.IPContext) error {
+	if err := cw.Write(ipContextCSVHeader); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+	if err := cw.Write(ipContextCSVRecord(c)); err != nil {
+		return fmt.Errorf("write csv record: %w", err)
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// ipContextCSVRecord flattens one context into a row matching ipContextCSVHeader.
+func ipContextCSVRecord(c spur.IPContext) []string {
+	return []string{
 		c.IP,
 		c.Infrastructure,
 		c.Organization,
@@ -62,9 +91,5 @@ func writeIPContextCSV(cw *csv.Writer, c spur.IPContext) error {
 		strings.Join(c.Client.Proxies, "|"),
 		strings.Join(c.Risks, "|"),
 		strings.Join(c.Services, "|"),
-	}); err != nil {
-		return fmt.Errorf("write csv record: %w", err)
 	}
-	cw.Flush()
-	return cw.Error()
 }

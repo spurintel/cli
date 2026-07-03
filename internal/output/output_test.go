@@ -141,6 +141,75 @@ func TestRenderTextColor(t *testing.T) {
 	}
 }
 
+// batchContexts is two distinct IPContexts for exercising slice rendering.
+func batchContexts() []spur.IPContext {
+	a := sampleContext()
+	b := sampleContext()
+	b.IP = "1.1.1.1"
+	b.Organization = "CLOUDFLARE"
+	b.AS = spur.ASInfo{Number: 13335, Organization: "CLOUDFLARENET"}
+	return []spur.IPContext{a, b}
+}
+
+func TestRenderJSONBatch(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatJSON, false, batchContexts()); err != nil {
+		t.Fatalf("Render json batch: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("batch json = %d lines, want 2 (NDJSON, one object per line): %q", len(lines), buf.String())
+	}
+	var ips []string
+	for _, ln := range lines {
+		var c spur.IPContext
+		if err := json.Unmarshal([]byte(ln), &c); err != nil {
+			t.Fatalf("line is not a bare JSON object: %v\n%s", err, ln)
+		}
+		ips = append(ips, c.IP)
+	}
+	if !slices.Equal(ips, []string{"8.8.8.8", "1.1.1.1"}) {
+		t.Errorf("batch json IPs = %v, want [8.8.8.8 1.1.1.1] in order", ips)
+	}
+}
+
+func TestRenderCSVBatch(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatCSV, false, batchContexts()); err != nil {
+		t.Fatalf("Render csv batch: %v", err)
+	}
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("csv batch does not parse: %v", err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("csv batch records = %d, want 3 (one header + two rows)", len(records))
+	}
+	if !slices.Contains(records[1], "8.8.8.8") || !slices.Contains(records[2], "1.1.1.1") {
+		t.Errorf("csv batch rows out of order or missing IPs: %v", records)
+	}
+}
+
+func TestRenderTextBatch(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, false, batchContexts()); err != nil {
+		t.Fatalf("Render text batch: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"8.8.8.8", "1.1.1.1", "CLOUDFLARE"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("batch text missing %q\n%s", want, out)
+		}
+	}
+	// Two IP reports means two ◆ headers.
+	if n := strings.Count(out, "◆"); n != 2 {
+		t.Errorf("batch text has %d report headers, want 2\n%s", n, out)
+	}
+}
+
 func TestRenderUnknownFormat(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer

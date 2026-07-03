@@ -109,7 +109,7 @@ func TestConfigOverrideDrivesClientToOverriddenHost(t *testing.T) {
 	}
 
 	client := cf.newClient("tok")
-	got, err := fetchContext(context.Background(), client, "8.8.8.8")
+	got, err := fetchContext(context.Background(), client, "8.8.8.8", spur.IPContextOptions{})
 	if err != nil {
 		t.Fatalf("fetchContext against override host: %v", err)
 	}

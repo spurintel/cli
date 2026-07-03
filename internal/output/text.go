@@ -31,6 +31,18 @@ func renderText(w io.Writer, color bool, v any) error {
 		return renderIPContext(w, s, c)
 	case *spur.IPContext:
 		return renderIPContext(w, s, *c)
+	case []spur.IPContext:
+		for i := range c {
+			if i > 0 {
+				if _, err := io.WriteString(w, "\n"); err != nil {
+					return err
+				}
+			}
+			if err := renderIPContext(w, s, c[i]); err != nil {
+				return err
+			}
+		}
+		return nil
 	default:
 		return renderJSON(w, v)
 	}
