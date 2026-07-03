@@ -3,6 +3,7 @@ module github.com/spurintel/cli
 go 1.26.2
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2

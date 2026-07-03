@@ -39,12 +39,18 @@ func newRootCmd() *cobra.Command {
 	}
 	of := &outputFlags{}
 	of.register(cmd)
-	// Validate output flags once, before any command does network work, so a
-	// bad --format never spends a metered API query.
+	cf := &configFlags{}
+	cf.register(cmd)
+	// Validate output flags and resolve config once, before any command does
+	// network work, so a bad --format or unknown --profile never spends a
+	// metered API query.
 	cmd.PersistentPreRunE = func(*cobra.Command, []string) error {
-		return of.validate()
+		if err := of.validate(); err != nil {
+			return err
+		}
+		return cf.resolve()
 	}
-	cmd.AddCommand(newContextCmd(of))
+	cmd.AddCommand(newContextCmd(of, cf))
 	cmd.AddCommand(newVersionCmd())
 	return cmd
 }

@@ -13,7 +13,7 @@ import (
 // newContextCmd builds `spur context <ip>`: look up an IP in the Spur Context
 // API and render the result through the shared output renderer (styled text at
 // a terminal, JSON when piped; overridable with --format).
-func newContextCmd(of *outputFlags) *cobra.Command {
+func newContextCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "context <ip>",
 		Short: "Look up the Spur context for an IP address",
@@ -27,7 +27,7 @@ func newContextCmd(of *outputFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client := spur.NewClient(token)
+			client := cf.newClient(token)
 			result, err := fetchContext(cmd.Context(), client, args[0])
 			if err != nil {
 				return err
