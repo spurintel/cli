@@ -1,0 +1,22 @@
+version: 2
+
+# Dependabot config required by Spur's merge-to-production process §3.
+# Replace / add ecosystems based on what this repo uses.
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Uncomment and edit for your language:
+  # - package-ecosystem: "gomod"
+  #   directory: "/"
+  #   schedule: { interval: "weekly" }
+  # - package-ecosystem: "npm"
+  #   directory: "/"
+  #   schedule: { interval: "weekly" }
+  # - package-ecosystem: "pip"
+  #   directory: "/"
+  #   schedule: { interval: "weekly" }

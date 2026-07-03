@@ -1,0 +1,37 @@
+name: Branch name check
+
+# Enforces Spur's branch naming standard from merge-to-production.md §1.
+# The regex here MUST stay in sync with plugins/spur-superpowers/scripts/branch-spec.sh.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  branch-name-check:
+    name: Branch name check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch name
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          set -e
+          echo "Branch: $BRANCH"
+          # Exempt bot-generated branches that can't carry a Linear ID.
+          # Extend this list only for well-scoped automation (no human PRs).
+          case "$BRANCH" in
+            release-please--*|dependabot/*)
+              echo "Bot branch '$BRANCH' — exempt from Spur naming standard."
+              exit 0 ;;
+          esac
+          re='^(feat|fix|chore|refactor|docs|test|sec|hotfix)/[A-Za-z]+-[0-9]+$'
+          if ! [[ "$BRANCH" =~ $re ]]; then
+            echo "::error::Branch name '$BRANCH' does not match Spur's naming standard."
+            echo "Expected: <type>/<linear-id>  (no description segment)"
+            echo "Types: feat, fix, chore, refactor, docs, test, sec, hotfix"
+            echo "Example: feat/dev-123"
+            echo "See https://github.com/spurintel/spur-superpowers/blob/main/plugins/spur-superpowers/templates/AGENTS.md"
+            exit 1
+          fi
+          echo "Branch name OK."

@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Spur commit-msg hook.
+#
+# Enforces "<type>(<LINEAR-ID>)[!]: <subject>" per merge-to-production.md §1.
+# Installed by spur-bootstrap, which points core.hooksPath at .githooks/.
+# Canonical regex source: plugins/spur-superpowers/scripts/branch-spec.sh
+# (kept in sync via .github/workflows/branch-name-check.yml in spur-superpowers).
+#
+# Compatible with bash 3.2+ (macOS default). Bypass with --no-verify.
+
+set -u
+
+msg_file="${1:?commit-msg hook expects path to message file}"
+
+# First non-blank, non-comment line is the subject.
+subject=""
+while IFS= read -r line; do
+  case "$line" in
+    "") continue ;;
+    "#"*) continue ;;
+    *) subject="$line"; break ;;
+  esac
+done < "$msg_file"
+
+# Empty-message commits are git's concern, not ours.
+[[ -z "$subject" ]] && exit 0
+
+# Bypass git-generated messages and interactive-rebase markers.
+case "$subject" in
+  "Revert "*|"Merge "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
+esac
+
+# Type must be a Conventional Commit type Spur uses; scope must be a Linear ID.
+# Linear ID accepts either case (e.g. dev-123 or DEV-123) so commits derived from
+# legacy uppercase branches still pass; new branches default to lowercase.
+re='^(feat|fix|chore|refactor|docs|test)\([A-Za-z]+-[0-9]+\)!?: .+'
+if ! [[ "$subject" =~ $re ]]; then
+  echo "Spur commit-msg hook: subject does not match required format." >&2
+  echo "  required: <type>(<linear-id>): <subject>" >&2
+  echo "  example:  feat(dev-123): add asn filter" >&2
+  echo "  got:      $subject" >&2
+  echo "" >&2
+  echo "Allowed types: feat, fix, chore, refactor, docs, test." >&2
+  echo "(sec/ branches commit as chore; hotfix/ branches commit as fix.)" >&2
+  exit 1
+fi
+
+# 72-char subject cap.
+if (( ${#subject} > 72 )); then
+  echo "Spur commit-msg hook: subject is ${#subject} chars (max 72)." >&2
+  echo "  $subject" >&2
+  exit 1
+fi

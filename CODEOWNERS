@@ -1,0 +1,9 @@
+# CODEOWNERS — see https://docs.github.com/en/repositories/managing-your-repositories-settings-and-security/customizing-your-repository/about-code-owners
+# Required by Spur's merge-to-production process §4.
+#
+# Default: everything owned by the whole eng team. Narrow per path as teams form:
+#   /infra/                                 @spurintel/devops
+#   *.go                                    @spurintel/backend
+#   /.github/workflows/                     @spurintel/devops
+
+*                                           @spurintel/spur-intelligence-corp

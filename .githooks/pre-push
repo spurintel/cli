@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Spur pre-push hook.
+#
+# Validates branch names against merge-to-production.md §1 before push.
+# Installed by spur-bootstrap, which points core.hooksPath at .githooks/.
+# Canonical regex source: plugins/spur-superpowers/scripts/branch-spec.sh
+# (kept in sync via .github/workflows/branch-name-check.yml in spur-superpowers).
+#
+# Compatible with bash 3.2+ (macOS default). Bypass with --no-verify.
+
+set -u
+
+branch_re='^(feat|fix|chore|refactor|docs|test|sec|hotfix)/[A-Za-z]+-[0-9]+$'
+zero_sha='0000000000000000000000000000000000000000'
+
+# stdin: <local-ref> <local-sha> <remote-ref> <remote-sha>, one push per line.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z "${local_ref:-}" ]] && continue
+  # Skip deletions.
+  [[ "$local_sha" == "$zero_sha" ]] && continue
+  # Only validate branch pushes; tags and other refs pass through.
+  case "$local_ref" in
+    refs/heads/*) ;;
+    *) continue ;;
+  esac
+  branch="${local_ref#refs/heads/}"
+
+  # Bot branches that bypass the standard (mirrors branch-name-check.yml).
+  case "$branch" in
+    release-please--*|dependabot/*) continue ;;
+  esac
+
+  if ! [[ "$branch" =~ $branch_re ]]; then
+    echo "Spur pre-push hook: branch '$branch' does not match Spur's naming standard." >&2
+    echo "  expected: <type>/<linear-id>  (no description segment)" >&2
+    echo "  example:  feat/dev-123" >&2
+    echo "  types:    feat, fix, chore, refactor, docs, test, sec, hotfix" >&2
+    exit 1
+  fi
+done
+
+exit 0

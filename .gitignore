@@ -1,0 +1,13 @@
+# Binary
+/spur
+/bin/
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
