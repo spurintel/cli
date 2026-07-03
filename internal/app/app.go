@@ -37,7 +37,14 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	cmd.AddCommand(newContextCmd())
+	of := &outputFlags{}
+	of.register(cmd)
+	// Validate output flags once, before any command does network work, so a
+	// bad --format never spends a metered API query.
+	cmd.PersistentPreRunE = func(*cobra.Command, []string) error {
+		return of.validate()
+	}
+	cmd.AddCommand(newContextCmd(of))
 	cmd.AddCommand(newVersionCmd())
 	return cmd
 }

@@ -2,10 +2,7 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -14,13 +11,16 @@ import (
 )
 
 // newContextCmd builds `spur context <ip>`: look up an IP in the Spur Context
-// API and print the result as JSON.
-func newContextCmd() *cobra.Command {
+// API and render the result through the shared output renderer (styled text at
+// a terminal, JSON when piped; overridable with --format).
+func newContextCmd(of *outputFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "context <ip>",
 		Short: "Look up the Spur context for an IP address",
-		Long: "Look up an IPv4 or IPv6 address in the Spur Context API and print " +
-			"the result as JSON.\n\nAuthentication uses the SPUR_TOKEN environment variable.",
+		Long: "Look up an IPv4 or IPv6 address in the Spur Context API.\n\n" +
+			"Output is a styled report at a terminal and newline-delimited JSON when " +
+			"piped or redirected; use --format to override.\n\n" +
+			"Authentication uses the SPUR_TOKEN environment variable.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			token, err := resolveToken()
@@ -28,7 +28,11 @@ func newContextCmd() *cobra.Command {
 				return err
 			}
 			client := spur.NewClient(token)
-			return runContext(cmd.Context(), client, cmd.OutOrStdout(), args[0])
+			result, err := fetchContext(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			return of.emit(cmd, result)
 		},
 	}
 }
@@ -43,32 +47,26 @@ func resolveToken() (string, error) {
 	return "", errors.New("SPUR_TOKEN is not set; get a token from https://app.spur.us/settings/api")
 }
 
-// runContext validates the IP, calls the client, and writes indented JSON to w.
-// It is split out from the cobra wiring so it can be exercised end-to-end in a
-// test against an httptest server.
+// fetchContext validates the IP and calls the client, returning the context.
+// It is split from the cobra wiring and from rendering so it can be exercised
+// end-to-end against an httptest server.
 //
 // API failures are collapsed to the client's stable, sanitized message
 // (unauthorized / forbidden / throttled / bad request) so the operator sees a
 // clear cause instead of a raw status line or a stack trace.
-func runContext(ctx context.Context, client *spur.Client, w io.Writer, ip string) error {
+func fetchContext(ctx context.Context, client *spur.Client, ip string) (spur.IPContext, error) {
 	ip, err := spur.ValidateIP(ip)
 	if err != nil {
-		return err
+		return spur.IPContext{}, err
 	}
 
 	result, _, err := client.GetIPContext(ctx, ip, spur.IPContextOptions{})
 	if err != nil {
 		var apiErr *spur.APIError
 		if errors.As(err, &apiErr) {
-			return errors.New(apiErr.Message())
+			return spur.IPContext{}, errors.New(apiErr.Message())
 		}
-		return err
+		return spur.IPContext{}, err
 	}
-
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(result); err != nil {
-		return fmt.Errorf("encode result: %w", err)
-	}
-	return nil
+	return result, nil
 }
