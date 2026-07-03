@@ -1,9 +1,7 @@
 package app
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +10,7 @@ import (
 	"github.com/spurintel/cli/internal/spur"
 )
 
-func TestRunContextPrintsJSON(t *testing.T) {
+func TestFetchContextReturnsResult(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,22 +25,19 @@ func TestRunContextPrintsJSON(t *testing.T) {
 	client := spur.NewClient("secret")
 	client.Base = srv.URL
 
-	var buf bytes.Buffer
-	if err := runContext(context.Background(), client, &buf, "8.8.8.8"); err != nil {
-		t.Fatalf("runContext: %v", err)
-	}
-
-	// Output must be valid JSON echoing the looked-up address.
-	var got spur.IPContext
-	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
-		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	got, err := fetchContext(context.Background(), client, "8.8.8.8")
+	if err != nil {
+		t.Fatalf("fetchContext: %v", err)
 	}
 	if got.IP != "8.8.8.8" {
-		t.Fatalf("decoded IP = %q, want 8.8.8.8", got.IP)
+		t.Fatalf("fetched IP = %q, want 8.8.8.8", got.IP)
+	}
+	if got.AS.Number != 15169 {
+		t.Fatalf("fetched ASN = %d, want 15169", got.AS.Number)
 	}
 }
 
-func TestRunContextErrorMessagesAreDistinctAndClean(t *testing.T) {
+func TestFetchContextErrorMessagesAreDistinctAndClean(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -68,8 +63,7 @@ func TestRunContextErrorMessagesAreDistinctAndClean(t *testing.T) {
 			client := spur.NewClient("token")
 			client.Base = srv.URL
 
-			var buf bytes.Buffer
-			err := runContext(context.Background(), client, &buf, "8.8.8.8")
+			_, err := fetchContext(context.Background(), client, "8.8.8.8")
 			if err == nil {
 				t.Fatal("expected an error, got nil")
 			}
@@ -79,23 +73,15 @@ func TestRunContextErrorMessagesAreDistinctAndClean(t *testing.T) {
 			if strings.Contains(err.Error(), "internal upstream detail") {
 				t.Fatalf("error leaked upstream body: %q", err.Error())
 			}
-			if buf.Len() != 0 {
-				t.Fatalf("expected no stdout on error, got %q", buf.String())
-			}
 		})
 	}
 }
 
-func TestRunContextRejectsInvalidIP(t *testing.T) {
+func TestFetchContextRejectsInvalidIP(t *testing.T) {
 	t.Parallel()
 
-	// A nil client is safe here: validation must fail before any HTTP call.
-	var buf bytes.Buffer
-	err := runContext(context.Background(), spur.NewClient("token"), &buf, "not-an-ip")
+	_, err := fetchContext(context.Background(), spur.NewClient("token"), "not-an-ip")
 	if err == nil {
 		t.Fatal("expected validation error, got nil")
-	}
-	if buf.Len() != 0 {
-		t.Fatalf("expected no output for invalid IP, got %q", buf.String())
 	}
 }
