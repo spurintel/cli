@@ -44,8 +44,8 @@ Prefer these skills over hand-writing regex, GitHub Actions, or CODEOWNERS logic
 <!-- Add anything agent-relevant about THIS repo below: architecture, quirks, where to find config, how to run tests locally, etc. Keep it tight. -->
 
 `spur` is the Spur command-line client (successor to `spurctx`) — a single binary
-built from `./cmd/spur`. Tracer-bullet status: `context` and `version` today;
-`status`, `tag`, `auth`, completion, and an embedded MCP server are planned.
+built from `./cmd/spur`. Status: `context`, `version`, and the embedded `mcp`
+server today; `status`, `tag`, `auth`, and completion are planned.
 
 ### Go conventions
 
@@ -56,11 +56,20 @@ Read the reference before making structural changes. The `spur-go-standards` ski
 ### Layout
 
 - `cmd/spur/main.go` — thin entry point; hands off to `internal/app.Run(ctx)`.
-- `internal/app/` — cobra root command and subcommands (`context`, `version`).
+- `cmd/cleandocs/` — `go generate` helper that regenerates the embedded MCP docs
+  and schemas from the `web` docs repo. Run via `go generate ./internal/spur`.
+- `internal/app/` — cobra root command and subcommands (`context`, `mcp`, `version`).
 - `internal/spur/` — the shared Spur Context API client, lifted from `spur-mcp`:
   HTTP + `Token` header, tolerant decoding (`FlexBool`/`FlexNumber`), quota-header
   parsing, structured error classes (unauthorized / forbidden / throttled / bad-request).
+  Also holds the MCP server's embedded `schemas/` + `docs/` (`embed.go`) and the
+  `enumdict` schema-walker behind `explain_enum`.
+- `internal/tools/`, `internal/resources/`, `internal/prompts/` — the MCP surface
+  behind `spur mcp`: five tools, schema/doc resources, and the `assess_ip` prompt,
+  all wired to the shared `internal/spur` client.
 - `internal/buildinfo/` — ldflags-injected version, consumed by `spur version` and the API User-Agent.
+- `scripts/mcp-smoke.sh` — end-to-end stdio smoke test for `spur mcp` (carried over
+  from `spur-mcp`); run against a built binary. `SPUR_LIVE=1` adds authenticated calls.
 
 ### Running locally
 
