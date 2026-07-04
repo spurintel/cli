@@ -5,6 +5,9 @@ import (
 	"io"
 	"strings"
 
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/spurintel/cli/internal/spur"
 )
 
@@ -25,34 +28,38 @@ type kv struct {
 // to lay out. Anything else falls back to JSON so the renderer never refuses a
 // value outright; styled layouts are added per entity as commands land.
 func renderText(w io.Writer, color bool, v any) error {
+	// Styles and width come from the raw destination; the writes themselves go
+	// through the profile writer, which degrades ANSI to what w supports.
 	s := newStyles(w, color)
+	width := terminalWidth(w)
+	cw := Writer(w, color)
 	switch c := v.(type) {
 	case spur.Status:
-		return renderStatus(w, s, c)
+		return renderStatus(cw, s, width, c)
 	case *spur.Status:
-		return renderStatus(w, s, *c)
+		return renderStatus(cw, s, width, *c)
 	case spur.TagMetadata:
-		return renderTagMetadata(w, s, c)
+		return renderTagMetadata(cw, s, width, c)
 	case *spur.TagMetadata:
-		return renderTagMetadata(w, s, *c)
+		return renderTagMetadata(cw, s, width, *c)
 	case spur.FeedMetadata:
-		return renderFeedMetadata(w, s, c)
+		return renderFeedMetadata(cw, s, width, c)
 	case *spur.FeedMetadata:
-		return renderFeedMetadata(w, s, *c)
+		return renderFeedMetadata(cw, s, width, *c)
 	case []spur.FeedType:
-		return renderFeedTypes(w, s, c)
+		return renderFeedTypes(cw, s, width, c)
 	case spur.IPContext:
-		return renderIPContext(w, s, c)
+		return renderIPContext(cw, s, width, c)
 	case *spur.IPContext:
-		return renderIPContext(w, s, *c)
+		return renderIPContext(cw, s, width, *c)
 	case []spur.IPContext:
 		for i := range c {
 			if i > 0 {
-				if _, err := io.WriteString(w, "\n"); err != nil {
+				if _, err := io.WriteString(cw, "\n"); err != nil {
 					return err
 				}
 			}
-			if err := renderIPContext(w, s, c[i]); err != nil {
+			if err := renderIPContext(cw, s, width, c[i]); err != nil {
 				return err
 			}
 		}
@@ -62,7 +69,7 @@ func renderText(w io.Writer, color bool, v any) error {
 	}
 }
 
-func renderIPContext(w io.Writer, s Styles, c spur.IPContext) error {
+func renderIPContext(w io.Writer, s Styles, width int, c spur.IPContext) error {
 	blocks := []block{
 		{name: "Network", values: []kv{
 			{"ASN", c.AS.Number},
@@ -123,7 +130,7 @@ func renderIPContext(w io.Writer, s Styles, c spur.IPContext) error {
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Title.Render("◆  IP ")+s.Value.Render(c.IP))
 	for i, blk := range blocks {
-		writeBlock(&b, s, blk, i+1 == len(blocks))
+		writeBlock(&b, s, width, blk, i+1 == len(blocks))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -133,7 +140,7 @@ func renderIPContext(w io.Writer, s Styles, c spur.IPContext) error {
 // flag (as a colored ●/○ marker), queries remaining, and service tier. The
 // marker uses the Success/Warning palette so a healthy token reads at a glance;
 // the underlying bool is preserved verbatim in the JSON and CSV renderings.
-func renderStatus(w io.Writer, s Styles, st spur.Status) error {
+func renderStatus(w io.Writer, s Styles, width int, st spur.Status) error {
 	marker := s.Warning.Render("○ inactive")
 	if st.Active {
 		marker = s.Success.Render("● active")
@@ -147,7 +154,7 @@ func renderStatus(w io.Writer, s Styles, st spur.Status) error {
 
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Title.Render("◆  Token Status"))
-	writeBlock(&b, s, blk, true)
+	writeBlock(&b, s, width, blk, true)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -157,7 +164,7 @@ func renderStatus(w io.Writer, s Styles, st spur.Status) error {
 // attribute flags, a Reach block (platforms/protocols/targeting), and, when the
 // API returned them, an aggregate Metrics block. Optional flags that the API
 // omitted collapse to the muted placeholder rather than reading as "false".
-func renderTagMetadata(w io.Writer, s Styles, t spur.TagMetadata) error {
+func renderTagMetadata(w io.Writer, s Styles, width int, t spur.TagMetadata) error {
 	blocks := []block{
 		{name: "Overview", values: []kv{
 			{"Name", t.Name},
@@ -203,7 +210,7 @@ func renderTagMetadata(w io.Writer, s Styles, t spur.TagMetadata) error {
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Title.Render("◆  Tag ")+s.Value.Render(label))
 	for i, blk := range blocks {
-		writeBlock(&b, s, blk, i+1 == len(blocks))
+		writeBlock(&b, s, width, blk, i+1 == len(blocks))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -212,7 +219,7 @@ func renderTagMetadata(w io.Writer, s Styles, t spur.TagMetadata) error {
 // renderFeedTypes lays out the feed catalog: a single block listing each feed
 // type as name → description, so `spur feed list` reads as a legible menu at a
 // terminal and stays greppable.
-func renderFeedTypes(w io.Writer, s Styles, types []spur.FeedType) error {
+func renderFeedTypes(w io.Writer, s Styles, width int, types []spur.FeedType) error {
 	blk := block{name: "Feeds"}
 	for _, ft := range types {
 		blk.values = append(blk.values, kv{ft.Name, ft.Description})
@@ -220,7 +227,7 @@ func renderFeedTypes(w io.Writer, s Styles, types []spur.FeedType) error {
 
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Title.Render("◆  Feed Catalog"))
-	writeBlock(&b, s, blk, true)
+	writeBlock(&b, s, width, blk, true)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -230,11 +237,11 @@ func renderFeedTypes(w io.Writer, s Styles, types []spur.FeedType) error {
 // block. Each shows the date, relative location, generation timestamps, and a
 // human-readable filesize. The realtime feed omits the timestamps and filesize,
 // which collapse to the muted placeholder rather than reading as zero.
-func renderFeedMetadata(w io.Writer, s Styles, md spur.FeedMetadata) error {
+func renderFeedMetadata(w io.Writer, s Styles, width int, md spur.FeedMetadata) error {
 	fileBlock := func(name string, f spur.FeedFile) block {
 		filesize := ""
 		if f.Filesize > 0 {
-			filesize = fmt.Sprintf("%s (%d bytes)", humanizeBytes(f.Filesize), f.Filesize)
+			filesize = fmt.Sprintf("%s (%d bytes)", HumanizeBytes(f.Filesize), f.Filesize)
 		}
 		return block{name: name, values: []kv{
 			{"Date", f.Date},
@@ -258,15 +265,15 @@ func renderFeedMetadata(w io.Writer, s Styles, md spur.FeedMetadata) error {
 	var b strings.Builder
 	fmt.Fprintln(&b, s.Title.Render("◆  Feed ")+s.Value.Render(label))
 	for i, blk := range blocks {
-		writeBlock(&b, s, blk, i+1 == len(blocks))
+		writeBlock(&b, s, width, blk, i+1 == len(blocks))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-// humanizeBytes renders a byte count with a binary (IEC) unit suffix, so a
+// HumanizeBytes renders a byte count with a binary (IEC) unit suffix, so a
 // multi-gigabyte feed reads as "1.2 GiB" rather than a wall of digits.
-func humanizeBytes(n int64) string {
+func HumanizeBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)
@@ -297,8 +304,10 @@ func flexNumberValue(n spur.FlexNumber) any {
 }
 
 // writeBlock renders one block: a connector + name line, then a │-prefixed row
-// per value with keys padded to a common width for alignment.
-func writeBlock(b *strings.Builder, s Styles, blk block, final bool) {
+// per value with keys padded to a common width for alignment. Values longer
+// than the terminal is wide wrap onto continuation lines that stay aligned
+// under the value column, so a long description never breaks the tree layout.
+func writeBlock(b *strings.Builder, s Styles, width int, blk block, final bool) {
 	connector, row := "├", "│"
 	if final {
 		connector, row = "└", " "
@@ -310,51 +319,72 @@ func writeBlock(b *strings.Builder, s Styles, blk block, final bool) {
 
 	keyWidth := 0
 	for _, v := range blk.values {
-		if l := len(v.key); l > keyWidth {
+		if l := lipgloss.Width(v.key); l > keyWidth {
 			keyWidth = l
 		}
 	}
+	// Row layout: row glyph + 4 spaces + padded key + 2 spaces + value.
+	valueWidth := max(24, width-(1+4+keyWidth+2))
+	continuation := strings.Repeat(" ", keyWidth)
 	for _, v := range blk.values {
-		key := s.Key.Render(padRight(v.key, keyWidth))
-		fmt.Fprintf(b, "%s    %s  %s\n", s.Frame.Render(row), key, formatValue(s, v.val))
+		lines := formatValueLines(s, v.val, valueWidth)
+		for i, line := range lines {
+			key := continuation
+			if i == 0 {
+				key = s.Key.Render(padRight(v.key, keyWidth))
+			}
+			fmt.Fprintf(b, "%s    %s  %s\n", s.Frame.Render(row), key, line)
+		}
 	}
 }
 
 // preStyled is a value the caller has already rendered to a styled string.
-// formatValue emits it verbatim so callers can inject markers with their own
-// color (e.g. the status active/inactive marker) without it being re-wrapped in
-// the default Value style.
+// formatValueLines emits it verbatim so callers can inject markers with their
+// own color (e.g. the status active/inactive marker) without it being
+// re-wrapped in the default Value style.
 type preStyled string
 
-// formatValue renders a field value in a type-appropriate style, collapsing
-// absent scalars and empty slices to a muted placeholder.
-func formatValue(s Styles, v any) string {
+// formatValueLines renders a field value in a type-appropriate style, wrapped
+// to width, collapsing absent scalars and empty slices to a muted placeholder.
+// Each returned string is one fully styled display line.
+func formatValueLines(s Styles, v any, width int) []string {
+	if pre, ok := v.(preStyled); ok {
+		return []string{string(pre)}
+	}
+	text, style := valueText(s, v)
+	lines := strings.Split(ansi.Wrap(text, width, ""), "\n")
+	for i, line := range lines {
+		lines[i] = style.Render(line)
+	}
+	return lines
+}
+
+// valueText maps a field value to its display text and style.
+func valueText(s Styles, v any) (string, lipgloss.Style) {
 	switch val := v.(type) {
-	case preStyled:
-		return string(val)
 	case string:
 		if val == "" {
-			return s.Empty.Render("—")
+			return "—", s.Empty
 		}
-		return s.Value.Render(val)
+		return val, s.Value
 	case bool:
-		return s.Bool.Render(fmt.Sprintf("%t", val))
+		return fmt.Sprintf("%t", val), s.Bool
 	case int:
-		return s.Num.Render(fmt.Sprintf("%d", val))
+		return fmt.Sprintf("%d", val), s.Num
 	case float64:
-		return s.Num.Render(formatFloat(val))
+		return formatFloat(val), s.Num
 	case []string:
 		if len(val) == 0 {
-			return s.Empty.Render("—")
+			return "—", s.Empty
 		}
-		return s.Value.Render(strings.Join(val, ", "))
+		return strings.Join(val, ", "), s.Value
 	default:
-		return s.Value.Render(fmt.Sprintf("%v", val))
+		return fmt.Sprintf("%v", val), s.Value
 	}
 }
 
 func padRight(v string, width int) string {
-	if gap := width - len(v); gap > 0 {
+	if gap := width - lipgloss.Width(v); gap > 0 {
 		return v + strings.Repeat(" ", gap)
 	}
 	return v

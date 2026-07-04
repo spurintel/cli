@@ -79,6 +79,22 @@ func IsTerminal(w io.Writer) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
+// terminalWidth reports the column width of w when it is a terminal, so the
+// text renderer can wrap long values. A non-terminal destination (buffer,
+// pipe, file) gets a fixed 100 columns, wide enough that typical values render
+// unwrapped and deterministic in tests.
+func terminalWidth(w io.Writer) int {
+	f, ok := w.(interface{ Fd() uintptr })
+	if !ok {
+		return 100
+	}
+	width, _, err := term.GetSize(int(f.Fd()))
+	if err != nil || width <= 0 {
+		return 100
+	}
+	return width
+}
+
 // Render writes v to w in the given format. color enables ANSI styling for the
 // text format; the caller is responsible for deciding it (typically terminal
 // && !--no-color) so Render never second-guesses a non-terminal write. color

@@ -2,13 +2,14 @@ package app
 
 import (
 	"errors"
-	"fmt"
+	"os"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/spurintel/cli/internal/auth"
+	"github.com/spurintel/cli/internal/output"
 )
 
 // errAuthCancelled signals that the user declined to overwrite an existing
@@ -21,7 +22,7 @@ var errAuthCancelled = errors.New("auth cancelled")
 // stored token. The keychain is the lowest-precedence source the token resolver
 // consults, so a token stored here is used whenever SPUR_TOKEN and the config
 // file supply none.
-func newAuthCmd() *cobra.Command {
+func newAuthCmd(of *outputFlags) *cobra.Command {
 	var logout bool
 
 	cmd := &cobra.Command{
@@ -37,18 +38,22 @@ func newAuthCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr := auth.DefaultKeyring()
+			w := cmd.OutOrStdout()
+			color := of.colorEnabled(w)
 
 			if logout {
 				if err := auth.Logout(kr); err != nil {
 					return err
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), "Logged out: removed the stored token from the keychain.")
+				output.Successf(w, color, "Logged out: removed the stored token from the keychain.")
 				return nil
 			}
 
-			token, err := promptForToken(kr)
+			// The prompts draw on the invoking terminal, so their theme follows
+			// stdout's color decision rather than the -o destination's.
+			token, err := promptForToken(kr, output.HuhTheme(of.colorEnabled(os.Stdout)))
 			if errors.Is(err, errAuthCancelled) {
-				fmt.Fprintln(cmd.OutOrStdout(), "Kept the existing token; nothing changed.")
+				output.Infof(w, color, "Kept the existing token; nothing changed.")
 				return nil
 			}
 			if err != nil {
@@ -57,7 +62,7 @@ func newAuthCmd() *cobra.Command {
 			if err := auth.Store(kr, token); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Token stored in the OS keychain.")
+			output.Successf(w, color, "Token stored in the OS keychain.")
 			return nil
 		},
 	}
@@ -70,15 +75,15 @@ func newAuthCmd() *cobra.Command {
 // already stored it first asks for confirmation before overwriting, returning
 // errAuthCancelled if the user declines. The returned token is trimmed and
 // guaranteed non-empty.
-func promptForToken(kr auth.Keyring) (string, error) {
+func promptForToken(kr auth.Keyring, theme huh.Theme) (string, error) {
 	if existing, err := kr.Get(); err == nil && existing != "" {
 		overwrite := false
-		if err := huh.NewConfirm().
+		confirm := huh.NewConfirm().
 			Title("A Spur token is already stored. Overwrite it?").
 			Affirmative("Overwrite").
 			Negative("Keep existing").
-			Value(&overwrite).
-			Run(); err != nil {
+			Value(&overwrite)
+		if err := huh.NewForm(huh.NewGroup(confirm)).WithTheme(theme).Run(); err != nil {
 			return "", err
 		}
 		if !overwrite {
@@ -87,12 +92,12 @@ func promptForToken(kr auth.Keyring) (string, error) {
 	}
 
 	var token string
-	if err := huh.NewInput().
+	input := huh.NewInput().
 		Title("Spur API token").
 		Description("Paste your token from https://app.spur.us/settings/api (input hidden)").
 		EchoMode(huh.EchoModePassword).
-		Value(&token).
-		Run(); err != nil {
+		Value(&token)
+	if err := huh.NewForm(huh.NewGroup(input)).WithTheme(theme).Run(); err != nil {
 		return "", err
 	}
 

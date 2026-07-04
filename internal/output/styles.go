@@ -1,18 +1,44 @@
 package output
 
 import (
+	"image/color"
 	"io"
+	"os"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
+	"golang.org/x/term"
 )
 
-// Styles is the palette for the text renderer, bound to a specific writer.
+// palette is the CLI's color vocabulary, resolved for a light or dark
+// terminal background. It is shared by the text renderer, the status-line
+// helpers, and the huh prompt theme so every surface reads as one product.
+type palette struct {
+	accent     color.Color
+	secondary  color.Color
+	warm       color.Color
+	muted      color.Color
+	foreground color.Color
+}
+
+// newPalette resolves the palette for the given background.
+func newPalette(isDark bool) palette {
+	pick := lipgloss.LightDark(isDark)
+	return palette{
+		accent:     pick(lipgloss.Color("#7C3AED"), lipgloss.Color("#A277FF")),
+		secondary:  pick(lipgloss.Color("#047857"), lipgloss.Color("#61FFCA")),
+		warm:       pick(lipgloss.Color("#B45309"), lipgloss.Color("#FFCA85")),
+		muted:      pick(lipgloss.Color("#6B7280"), lipgloss.Color("#9A94A8")),
+		foreground: pick(lipgloss.Color("#111827"), lipgloss.Color("#EDECEE")),
+	}
+}
+
+// Styles is the palette for the text renderer.
 //
-// Color is decided by the caller, not auto-detected: color==true forces a
-// TrueColor profile, color==false forces Ascii (no ANSI at all). This keeps
-// the --no-color / non-terminal decision in one place (the command layer) and
-// makes styled output deterministic in tests, which write to a buffer.
+// In lipgloss v2 styles are not bound to a writer: they always render full
+// ANSI, and Writer degrades that output to what the destination supports
+// (including stripping it entirely). Always print rendered styles through
+// Writer(w, color).
 type Styles struct {
 	Title   lipgloss.Style // section/report header text
 	Frame   lipgloss.Style // tree connectors (├ │ └)
@@ -26,32 +52,58 @@ type Styles struct {
 	Warning lipgloss.Style // cautionary status markers
 }
 
-// newStyles builds a palette that renders to w. When color is false every
-// style degrades to plain text via the Ascii profile.
-func newStyles(w io.Writer, color bool) Styles {
-	r := lipgloss.NewRenderer(w)
+// NewStyles builds the style palette for output destined for w. w is used
+// only to pick the light or dark color variants: when it is a color-enabled
+// terminal its background is queried; otherwise the dark palette is assumed
+// (nothing colored is shown there anyway).
+func NewStyles(w io.Writer, color bool) Styles {
+	dark := true
 	if color {
-		r.SetColorProfile(termenv.TrueColor)
-	} else {
-		r.SetColorProfile(termenv.Ascii)
+		if f, ok := w.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+			dark = lipgloss.HasDarkBackground(os.Stdin, f)
+		}
 	}
-
-	accent := lipgloss.AdaptiveColor{Light: "#7C3AED", Dark: "#A277FF"}
-	secondary := lipgloss.AdaptiveColor{Light: "#047857", Dark: "#61FFCA"}
-	warm := lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FFCA85"}
-	muted := lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9A94A8"}
-	foreground := lipgloss.AdaptiveColor{Light: "#111827", Dark: "#EDECEE"}
+	p := newPalette(dark)
 
 	return Styles{
-		Title:   r.NewStyle().Bold(true).Foreground(accent),
-		Frame:   r.NewStyle().Foreground(accent),
-		Block:   r.NewStyle().Bold(true).Foreground(warm),
-		Key:     r.NewStyle().Foreground(secondary),
-		Value:   r.NewStyle().Foreground(foreground),
-		Empty:   r.NewStyle().Foreground(muted).Italic(true),
-		Bool:    r.NewStyle().Foreground(warm),
-		Num:     r.NewStyle().Foreground(warm),
-		Success: r.NewStyle().Foreground(secondary),
-		Warning: r.NewStyle().Foreground(warm),
+		Title:   lipgloss.NewStyle().Bold(true).Foreground(p.accent),
+		Frame:   lipgloss.NewStyle().Foreground(p.accent),
+		Block:   lipgloss.NewStyle().Bold(true).Foreground(p.warm),
+		Key:     lipgloss.NewStyle().Foreground(p.secondary),
+		Value:   lipgloss.NewStyle().Foreground(p.foreground),
+		Empty:   lipgloss.NewStyle().Foreground(p.muted).Italic(true),
+		Bool:    lipgloss.NewStyle().Foreground(p.warm),
+		Num:     lipgloss.NewStyle().Foreground(p.warm),
+		Success: lipgloss.NewStyle().Foreground(p.secondary),
+		Warning: lipgloss.NewStyle().Foreground(p.warm),
 	}
+}
+
+// newStyles is the internal spelling used by the render paths.
+func newStyles(w io.Writer, color bool) Styles {
+	return NewStyles(w, color)
+}
+
+// Writer wraps w so that styled output is degraded to what the destination
+// supports: full color passes through, a 256-color terminal gets downsampled
+// codes, and color==false strips ANSI entirely. When the caller demands color
+// on a writer with no detectable capability (tests writing to a buffer),
+// TrueColor is assumed.
+func Writer(w io.Writer, color bool) io.Writer {
+	cw := colorprofile.NewWriter(w, os.Environ())
+	if !color {
+		cw.Profile = colorprofile.NoTTY
+	} else if cw.Profile <= colorprofile.Ascii {
+		cw.Profile = colorprofile.TrueColor
+	}
+	return cw
+}
+
+// ColorEnabled reports whether w should receive ANSI color: an interactive
+// terminal whose environment permits it. Detection honors the NO_COLOR
+// convention (https://no-color.org), CLICOLOR=0, and CLICOLOR_FORCE, and
+// returns no color for a pipe or file. The --no-color flag is applied by the
+// caller on top of this.
+func ColorEnabled(w io.Writer) bool {
+	return colorprofile.Detect(w, os.Environ()) > colorprofile.Ascii
 }

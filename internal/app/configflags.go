@@ -2,9 +2,7 @@ package app
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +17,7 @@ type configFlags struct {
 	path     string // --config; empty means the default location
 	profile  string // --profile; empty means no profile
 	resolved conf.Resolved
+	warning  string // loose-permissions warning from resolve, shown by the pre-run hook
 }
 
 // register binds --config and --profile onto cmd's persistent flag set.
@@ -33,9 +32,9 @@ func (f *configFlags) register(cmd *cobra.Command) {
 // resolve loads the config and merges the selected profile over the built-in
 // production defaults. An explicit --config that is missing is an error; the
 // default path being absent is not (zero-config falls back to defaults). A
-// config file that stores a token with loose permissions draws a stderr
-// warning — the token is a credential and should not be readable by other
-// local users.
+// config file that stores a token with loose permissions records a warning —
+// the token is a credential and should not be readable by other local users —
+// which the root command's pre-run hook prints to stderr, styled.
 func (f *configFlags) resolve() error {
 	path := f.path
 	var (
@@ -58,9 +57,7 @@ func (f *configFlags) resolve() error {
 		return err
 	}
 
-	if warn := conf.LoosePermissionsWarning(path, cfg); warn != "" {
-		fmt.Fprintln(os.Stderr, "warning: "+warn)
-	}
+	f.warning = conf.LoosePermissionsWarning(path, cfg)
 
 	r, err := cfg.Resolve(f.profile, conf.Resolved{
 		BaseURL:        spur.BaseURL,

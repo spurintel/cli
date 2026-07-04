@@ -168,12 +168,13 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 
 			// Progress is a diagnostic: stderr only, and only when a human is
 			// watching. It never touches the stdout data channel.
-			var progressOut io.Writer
+			var progress *progressLine
 			if !silent && output.IsTerminal(os.Stderr) {
-				progressOut = cmd.ErrOrStderr()
+				w := cmd.ErrOrStderr()
+				progress = newProgressLine(w, of.colorEnabled(w), "Downloading "+slug)
 			}
 
-			return downloadFeed(cmd.Context(), client, slug, date, format, of.sink(cmd), expand, progressOut)
+			return downloadFeed(cmd.Context(), client, slug, date, format, of.sink(cmd), expand, progress)
 		},
 	}
 	cmd.Flags().StringVar(&date, "date", "", "download a historical release for this date (YYYYMMDD) instead of the latest")
@@ -242,10 +243,10 @@ func resolveDownloadSlug(arg string, ipv6, realtime bool) (string, error) {
 // MMDB artifact is authoritative there (the MMDB container), so a feed that has
 // no MMDB gets a clear up-front error instead of a bare 404 mid-download.
 //
-// progressOut, when non-nil, receives a self-overwriting progress line; the
+// progress, when non-nil, receives a self-overwriting progress bar; the
 // counter wraps the transfer stream so it tracks bytes downloaded against the
 // CDN's Content-Length.
-func downloadFeed(ctx context.Context, client *spur.Client, feedType, date string, format spur.FeedFormat, openSink func() (io.Writer, func() error, error), expand bool, progressOut io.Writer) error {
+func downloadFeed(ctx context.Context, client *spur.Client, feedType, date string, format spur.FeedFormat, openSink func() (io.Writer, func() error, error), expand bool, progress *progressLine) error {
 	if format == spur.FeedMMDB {
 		md, err := fetchFeedMetadata(ctx, client, feedType)
 		if err != nil {
@@ -266,8 +267,8 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 
 	var src io.Reader = body
 	var prog *progressReader
-	if progressOut != nil {
-		prog = newProgressReader(src, progressOut, "Downloading "+feedType, size)
+	if progress != nil {
+		prog = newProgressReader(src, progress, size)
 		src = prog
 	}
 
