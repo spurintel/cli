@@ -35,6 +35,12 @@ func renderText(w io.Writer, color bool, v any) error {
 		return renderTagMetadata(w, s, c)
 	case *spur.TagMetadata:
 		return renderTagMetadata(w, s, *c)
+	case spur.FeedMetadata:
+		return renderFeedMetadata(w, s, c)
+	case *spur.FeedMetadata:
+		return renderFeedMetadata(w, s, *c)
+	case []spur.FeedType:
+		return renderFeedTypes(w, s, c)
 	case spur.IPContext:
 		return renderIPContext(w, s, c)
 	case *spur.IPContext:
@@ -201,6 +207,76 @@ func renderTagMetadata(w io.Writer, s Styles, t spur.TagMetadata) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// renderFeedTypes lays out the feed catalog: a single block listing each feed
+// type as name → description, so `spur feed list` reads as a legible menu at a
+// terminal and stays greppable.
+func renderFeedTypes(w io.Writer, s Styles, types []spur.FeedType) error {
+	blk := block{name: "Feeds"}
+	for _, ft := range types {
+		blk.values = append(blk.values, kv{ft.Name, ft.Description})
+	}
+
+	var b strings.Builder
+	fmt.Fprintln(&b, s.Title.Render("◆  Feed Catalog"))
+	writeBlock(&b, s, blk, true)
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// renderFeedMetadata lays out a feed's metadata document: a JSON block (the
+// always-present newline-JSON artifact) and, when the API returned it, an MMDB
+// block. Each shows the date, relative location, generation timestamps, and a
+// human-readable filesize. The realtime feed omits the timestamps and filesize,
+// which collapse to the muted placeholder rather than reading as zero.
+func renderFeedMetadata(w io.Writer, s Styles, md spur.FeedMetadata) error {
+	fileBlock := func(name string, f spur.FeedFile) block {
+		filesize := ""
+		if f.Filesize > 0 {
+			filesize = fmt.Sprintf("%s (%d bytes)", humanizeBytes(f.Filesize), f.Filesize)
+		}
+		return block{name: name, values: []kv{
+			{"Date", f.Date},
+			{"Location", f.Location},
+			{"Generated At", f.GeneratedAt},
+			{"Available At", f.AvailableAt},
+			{"Filesize", filesize},
+		}}
+	}
+
+	blocks := []block{fileBlock("JSON", md.JSON)}
+	if md.MMDB != nil {
+		blocks = append(blocks, fileBlock("MMDB", *md.MMDB))
+	}
+
+	label := md.Type
+	if label == "" {
+		label = "metadata"
+	}
+
+	var b strings.Builder
+	fmt.Fprintln(&b, s.Title.Render("◆  Feed ")+s.Value.Render(label))
+	for i, blk := range blocks {
+		writeBlock(&b, s, blk, i+1 == len(blocks))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// humanizeBytes renders a byte count with a binary (IEC) unit suffix, so a
+// multi-gigabyte feed reads as "1.2 GiB" rather than a wall of digits.
+func humanizeBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // flexBoolValue turns an optional FlexBool into a value formatValue can style:

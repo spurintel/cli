@@ -42,7 +42,10 @@ func (f *configFlags) resolve() error {
 		return err
 	}
 
-	r, err := cfg.Resolve(f.profile, conf.Resolved{BaseURL: spur.BaseURL})
+	r, err := cfg.Resolve(f.profile, conf.Resolved{
+		BaseURL:      spur.BaseURL,
+		FeedsBaseURL: spur.FeedsBaseURL,
+	})
 	if err != nil {
 		return err
 	}
@@ -56,6 +59,9 @@ func (f *configFlags) newClient(token string) *spur.Client {
 	c := spur.NewClient(token)
 	if f.resolved.BaseURL != "" {
 		c.Base = f.resolved.BaseURL
+	}
+	if f.resolved.FeedsBaseURL != "" {
+		c.FeedsBase = f.resolved.FeedsBaseURL
 	}
 	return c
 }
