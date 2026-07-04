@@ -69,6 +69,37 @@ func LookupFeedType(name string) (FeedType, bool) {
 	return FeedType{}, false
 }
 
+// escapeFeedType path-escapes each segment of a (possibly nested) feed type so a
+// nested slug like anonymous-residential/realtime keeps its slash while every
+// segment is individually escaped.
+func escapeFeedType(feedType string) string {
+	segments := strings.Split(strings.Trim(strings.TrimSpace(feedType), "/"), "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	return strings.Join(segments, "/")
+}
+
+// FeedArtifactURL returns the absolute feeds-host URL of a feed's data artifact.
+// With an empty date it points at the latest release (`.../latest.json.gz` or
+// `.../latest.mmdb`); otherwise at the historical file for that YYYYMMDD
+// (`.../<date>/feed.json.gz` or `.../<date>/feed.mmdb`). The URL is authenticated
+// with the Token header and 302-redirects to the CDN. It is exposed so callers
+// that must surface a download pointer without streaming the bytes (e.g. the MCP
+// feed tool) share DownloadFeed's exact path construction rather than duplicating
+// it.
+func (c *Client) FeedArtifactURL(feedType, date string, format FeedFormat) string {
+	latestName, dailyName := "latest.json.gz", "feed.json.gz"
+	if format == FeedMMDB {
+		latestName, dailyName = "latest.mmdb", "feed.mmdb"
+	}
+	endpoint := c.FeedsBase + "/v2/" + escapeFeedType(feedType)
+	if date == "" {
+		return endpoint + "/" + latestName
+	}
+	return endpoint + "/" + url.PathEscape(date) + "/" + dailyName
+}
+
 // GetFeedMetadata calls GET /v2/{feedType}/latest on the feeds host and returns
 // the parsed Feed Metadata document with its Type field populated.
 //
@@ -82,11 +113,7 @@ func (c *Client) GetFeedMetadata(ctx context.Context, feedType string) (FeedMeta
 		return FeedMetadata{}, fmt.Errorf("feed type is required")
 	}
 
-	segments := strings.Split(feedType, "/")
-	for i, seg := range segments {
-		segments[i] = url.PathEscape(seg)
-	}
-	endpoint := c.FeedsBase + "/v2/" + strings.Join(segments, "/") + "/latest"
+	endpoint := c.FeedsBase + "/v2/" + escapeFeedType(feedType) + "/latest"
 
 	var out FeedMetadata
 	if _, err := c.doJSON(ctx, endpoint, &out); err != nil {
@@ -122,21 +149,7 @@ func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format
 		return nil, 0, fmt.Errorf("feed type is required")
 	}
 
-	latestName, dailyName := "latest.json.gz", "feed.json.gz"
-	if format == FeedMMDB {
-		latestName, dailyName = "latest.mmdb", "feed.mmdb"
-	}
-
-	segments := strings.Split(feedType, "/")
-	for i, seg := range segments {
-		segments[i] = url.PathEscape(seg)
-	}
-	endpoint := c.FeedsBase + "/v2/" + strings.Join(segments, "/")
-	if date == "" {
-		endpoint += "/" + latestName
-	} else {
-		endpoint += "/" + url.PathEscape(date) + "/" + dailyName
-	}
+	endpoint := c.FeedArtifactURL(feedType, date, format)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

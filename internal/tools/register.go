@@ -19,6 +19,10 @@ func Register(s *mcp.Server, c *spur.Client, dict *enumdict.Dict) {
 	registerGetAPIStatus(s, c)
 	registerExplainEnum(s, dict)
 	registerFormatAssessment(s)
+	registerListFeeds(s)
+	registerFeedStatus(s, c)
+	registerFeedDownload(s, c)
+	registerExport(s, c)
 }
 
 // toolError converts a Go error into an MCP tool-error result. A non-empty

@@ -3,23 +3,40 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/spurintel/cli/internal/spur"
 )
 
-// GetIPContextInput is the argument object for get_ip_context.
+// maxContextBatch bounds how many IPs one get_ip_context call may look up. A
+// batch is one Spur API request per IP, so the cap keeps a single tool call from
+// spending an unbounded slice of the token's quota.
+const maxContextBatch = 100
+
+// GetIPContextInput is the argument object for get_ip_context. Supply either a
+// single ip or a batch of ips (or both — they are concatenated in order).
 type GetIPContextInput struct {
-	IP string `json:"ip" jsonschema:"IPv4 or IPv6 address to look up."`
-	DT string `json:"dt,omitempty" jsonschema:"Optional historical date in YYYYmmdd format. Requires an Enterprise subscription with historical access."`
+	IP  string   `json:"ip,omitempty" jsonschema:"A single IPv4 or IPv6 address to look up. Provide this, ips, or both."`
+	IPs []string `json:"ips,omitempty" jsonschema:"Several IPv4/IPv6 addresses to look up in one call. Provide this, ip, or both."`
+	DT  string   `json:"dt,omitempty" jsonschema:"Optional historical date in YYYYmmdd format. Requires an Enterprise subscription with historical access."`
 }
 
-// GetIPContextOutput combines the parsed context body with the Spur response
-// headers (quota and result-date).
+// IPContextResult is one IP's outcome in a get_ip_context batch: either the
+// context (with response metadata) or a per-IP error. One failed IP does not
+// fail the others.
+type IPContextResult struct {
+	IP      string          `json:"ip" jsonschema:"The IP address this result is for."`
+	Context *spur.IPContext `json:"context,omitempty" jsonschema:"The IP Context object, omitted when this IP failed. See resource spur://schemas/ip-context for the full field reference."`
+	Meta    *spur.Meta      `json:"meta,omitempty" jsonschema:"Response metadata derived from Spur response headers, omitted when this IP failed."`
+	Error   string          `json:"error,omitempty" jsonschema:"The failure reason when this IP could not be looked up; the other IPs in the batch still return."`
+}
+
+// GetIPContextOutput holds one result per requested IP, in request order.
 type GetIPContextOutput struct {
-	Context spur.IPContext `json:"context" jsonschema:"The IP Context object. See resource spur://schemas/ip-context for the full field reference."`
-	Meta    spur.Meta      `json:"meta" jsonschema:"Response metadata derived from Spur response headers."`
+	Results []IPContextResult `json:"results" jsonschema:"One entry per requested IP, in request order. For a single IP this is a one-element list."`
 }
 
 // registerGetIPContext wires the get_ip_context tool onto the server.
@@ -27,26 +44,67 @@ func registerGetIPContext(s *mcp.Server, c *spur.Client) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:  "get_ip_context",
 		Title: "Look up IP context",
-		Description: "Retrieves the Spur IP Context for an IPv4 or IPv6 address. " +
-			"Returns enrichment data including AS info, geolocation, infrastructure " +
-			"type, risk factors, services (VPN/proxy protocols), tunnels, and client " +
-			"concentration. Optional 'dt' enables historical lookups (Enterprise only). " +
-			"See resource spur://schemas/ip-context for the full field reference. " +
-			"When assessing an IP, also call get_tag_metadata in parallel on each " +
-			"tunnels[].operator, each client.proxies[] entry, and each client.behaviors " +
-			"value matching ^*_USER$ (strip the _USER suffix). See resource " +
-			"spur://docs/analyst-playbook for the full procedure and field semantics.",
+		Description: "Retrieves the Spur IP Context for one or many IPv4/IPv6 addresses. " +
+			"Pass a single 'ip' or a batch as 'ips'; the result is a list with one entry " +
+			"per address, in request order (a single IP yields a one-element list). " +
+			"Each entry returns enrichment data including AS info, geolocation, " +
+			"infrastructure type, risk factors, services (VPN/proxy protocols), tunnels, " +
+			"and client concentration; a per-IP error does not fail the others. Optional " +
+			"'dt' enables historical lookups (Enterprise only). See resource " +
+			"spur://schemas/ip-context for the full field reference. When assessing an " +
+			"IP, also call get_tag_metadata in parallel on each tunnels[].operator, each " +
+			"client.proxies[] entry, and each client.behaviors value matching ^*_USER$ " +
+			"(strip the _USER suffix). See resource spur://docs/analyst-playbook for the " +
+			"full procedure and field semantics.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in GetIPContextInput) (*mcp.CallToolResult, GetIPContextOutput, error) {
 		dt, err := spur.ValidateHistoricalDate(in.DT)
 		if err != nil {
 			return toolError(err, "Use YYYYmmdd for historical lookups, for example 20250131."), GetIPContextOutput{}, nil
 		}
-		body, meta, err := c.GetIPContext(ctx, in.IP, spur.IPContextOptions{DT: dt})
-		if err != nil {
-			return toolError(err, statusHint(err)), GetIPContextOutput{}, nil
+
+		ips := make([]string, 0, 1+len(in.IPs))
+		if strings.TrimSpace(in.IP) != "" {
+			ips = append(ips, in.IP)
 		}
-		return nil, GetIPContextOutput{Context: body, Meta: meta}, nil
+		for _, ip := range in.IPs {
+			if strings.TrimSpace(ip) != "" {
+				ips = append(ips, ip)
+			}
+		}
+		if len(ips) == 0 {
+			return toolError(errors.New("no IP provided"), "Pass a single 'ip' or a batch as 'ips'."), GetIPContextOutput{}, nil
+		}
+		if len(ips) > maxContextBatch {
+			return toolError(fmt.Errorf("too many IPs in one call: %d (max %d)", len(ips), maxContextBatch), "Split the batch into smaller calls."), GetIPContextOutput{}, nil
+		}
+
+		opts := spur.IPContextOptions{DT: dt}
+		results := make([]IPContextResult, 0, len(ips))
+		for _, ip := range ips {
+			results = append(results, lookupOne(ctx, c, ip, opts))
+		}
+		return nil, GetIPContextOutput{Results: results}, nil
 	})
+}
+
+// lookupOne validates and looks up a single IP, returning its result with any
+// error captured per-IP (so a bad address or API failure never sinks the rest
+// of a batch). API errors are collapsed to the client's stable, sanitized
+// message, matching the `spur context` command.
+func lookupOne(ctx context.Context, c *spur.Client, ip string, opts spur.IPContextOptions) IPContextResult {
+	valid, err := spur.ValidateIP(ip)
+	if err != nil {
+		return IPContextResult{IP: ip, Error: err.Error()}
+	}
+	body, meta, err := c.GetIPContext(ctx, valid, opts)
+	if err != nil {
+		var apiErr *spur.APIError
+		if errors.As(err, &apiErr) {
+			return IPContextResult{IP: valid, Error: apiErr.Message()}
+		}
+		return IPContextResult{IP: valid, Error: err.Error()}
+	}
+	return IPContextResult{IP: valid, Context: &body, Meta: &meta}
 }
 
 // statusHint returns a remediation hint for known Spur API errors, or "" if

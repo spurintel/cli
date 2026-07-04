@@ -54,9 +54,11 @@ func newMCPCmd(cf *configFlags) *cobra.Command {
 		Short: "Run the Spur Model Context Protocol server (stdio)",
 		Long: "Run a stdio Model Context Protocol (MCP) server exposing the Spur Context " +
 			"API to AI clients such as Claude Desktop.\n\n" +
-			"It serves the get_ip_context, get_tag_metadata, get_api_status, explain_enum, " +
-			"and format_assessment tools, the Spur schema/doc resources, and the assess_ip " +
-			"prompt — all backed by the same client as `spur context`.\n\n" +
+			"It serves the get_ip_context (single or batch), get_tag_metadata, " +
+			"get_api_status, explain_enum, and format_assessment tools; the feed tools " +
+			"list_feeds, feed_status, and feed_download; the bounded export tool; the " +
+			"Spur schema/doc resources; and the assess_ip prompt — all backed by the " +
+			"same client as the `spur` commands.\n\n" +
 			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
 			"then the OS keychain. Clients typically pass the token in the environment:\n" +
 			"  claude mcp add spur -e SPUR_TOKEN=… -- spur mcp",
