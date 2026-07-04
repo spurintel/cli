@@ -57,11 +57,12 @@ func newMCPCmd(cf *configFlags) *cobra.Command {
 			"It serves the get_ip_context, get_tag_metadata, get_api_status, explain_enum, " +
 			"and format_assessment tools, the Spur schema/doc resources, and the assess_ip " +
 			"prompt — all backed by the same client as `spur context`.\n\n" +
-			"Authentication uses the SPUR_TOKEN environment variable. Register it with:\n" +
+			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
+			"then the OS keychain. Clients typically pass the token in the environment:\n" +
 			"  claude mcp add spur -e SPUR_TOKEN=… -- spur mcp",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, err := resolveToken()
+			token, err := resolveToken(cf.resolved.Token)
 			if err != nil {
 				return err
 			}

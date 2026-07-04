@@ -158,6 +158,63 @@ api = ""
 	}
 }
 
+func TestTokenResolution(t *testing.T) {
+	// A token may live at the top level and be overridden per-profile, exactly
+	// like an endpoint. It is the config-file tier the token resolver reads
+	// between the environment variable and the keychain.
+	path := writeConfig(t, `
+token = "top-token"
+
+[profiles.staging]
+token = "staging-token"
+
+[profiles.local.endpoints]
+api = "http://localhost:8080"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cases := []struct {
+		profile string
+		want    string
+	}{
+		{"", "top-token"},            // top-level token resolves
+		{"staging", "staging-token"}, // profile token overrides top-level
+		{"local", "top-token"},       // profile without a token inherits top-level
+	}
+	for _, tc := range cases {
+		got, err := cfg.Resolve(tc.profile, prodDefaults)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", tc.profile, err)
+		}
+		if got.Token != tc.want {
+			t.Errorf("Resolve(%q).Token = %q, want %q", tc.profile, got.Token, tc.want)
+		}
+	}
+}
+
+func TestMissingTokenResolvesEmpty(t *testing.T) {
+	// No token anywhere in the config must leave Resolved.Token empty so the
+	// resolver falls through to the keychain rather than sending a blank token.
+	path := writeConfig(t, `
+[endpoints]
+api = "https://api.staging.spur.us"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got, err := cfg.Resolve("", prodDefaults)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Token != "" {
+		t.Errorf("Resolve().Token = %q, want empty", got.Token)
+	}
+}
+
 func TestEmptyConfigFileIsValid(t *testing.T) {
 	path := writeConfig(t, "")
 	cfg, err := Load(path)

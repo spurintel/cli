@@ -25,10 +25,11 @@ func newTagCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			"it supports, and aggregate metrics across observed endpoints.\n\n" +
 			"Output is a styled report at a terminal and JSON when piped or " +
 			"redirected; use --format to override.\n\n" +
-			"Authentication uses the SPUR_TOKEN environment variable.",
+			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
+			"then the OS keychain; run `spur auth` to store one.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, err := resolveToken()
+			token, err := resolveToken(cf.resolved.Token)
 			if err != nil {
 				return err
 			}
