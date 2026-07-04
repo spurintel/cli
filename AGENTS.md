@@ -44,8 +44,8 @@ Prefer these skills over hand-writing regex, GitHub Actions, or CODEOWNERS logic
 <!-- Add anything agent-relevant about THIS repo below: architecture, quirks, where to find config, how to run tests locally, etc. Keep it tight. -->
 
 `spur` is the Spur command-line client (successor to `spurctx`) — a single binary
-built from `./cmd/spur`. Status: `context`, `version`, and the embedded `mcp`
-server today; `status`, `tag`, `auth`, and completion are planned.
+built from `./cmd/spur`. Commands: `context`, `status`, `tag`, `auth`,
+`completion`, `version`, and the embedded `mcp` server.
 
 ### Go conventions
 
@@ -75,7 +75,9 @@ Read the reference before making structural changes. The `spur-go-standards` ski
 
 - Build: `go build ./cmd/spur`
 - Test: `go test ./...`
-- Auth: export `SPUR_TOKEN` (config-file / keychain resolution is a later ticket).
+- Auth: the token resolves in precedence order `SPUR_TOKEN` env → config file
+  (`token`, top-level or per-profile) → OS keychain. Run `spur auth` to store a
+  token in the keychain (hidden-input prompt), `spur auth --logout` to clear it.
 
 ## Canonical process document
 

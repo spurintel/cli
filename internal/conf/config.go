@@ -22,6 +22,10 @@ import (
 
 // Config is the on-disk configuration, parsed from TOML.
 type Config struct {
+	// Token is the API token used when neither SPUR_TOKEN nor a selected
+	// profile supplies one. It is the config-file tier the token resolver
+	// consults between the environment variable and the OS keychain.
+	Token string `toml:"token"`
 	// Endpoints are the top-level overrides, applied over the built-in
 	// defaults for every invocation regardless of profile.
 	Endpoints EndpointOverrides `toml:"endpoints"`
@@ -39,6 +43,9 @@ type EndpointOverrides struct {
 
 // Profile is a named set of overrides selected with --profile.
 type Profile struct {
+	// Token overrides the top-level token when this profile is selected, so a
+	// user can keep a distinct token per environment.
+	Token     string            `toml:"token"`
 	Endpoints EndpointOverrides `toml:"endpoints"`
 }
 
@@ -47,6 +54,8 @@ type Profile struct {
 type Resolved struct {
 	// BaseURL is the base the shared client should talk to.
 	BaseURL string
+	// Token is the config-file API token, empty when the config supplies none.
+	Token string
 }
 
 // DefaultPath returns the path to the default config file:
@@ -93,26 +102,30 @@ func LoadDefault() (Config, error) {
 
 // Resolve merges the config over defaults and returns the effective settings.
 //
-// Precedence, lowest to highest: defaults → top-level [endpoints] → the
-// selected profile's [endpoints]. Empty override fields are skipped, so empty
-// or absent sections change nothing. An empty profile name selects no profile;
-// an unknown profile name is an error that lists the available profiles.
+// Precedence, lowest to highest: defaults → top-level (token + [endpoints]) →
+// the selected profile's (token + [endpoints]). Empty override fields are
+// skipped, so empty or absent sections change nothing. An empty profile name
+// selects no profile; an unknown profile name is an error that lists the
+// available profiles.
 func (c Config) Resolve(profile string, defaults Resolved) (Resolved, error) {
 	r := defaults
-	apply := func(e EndpointOverrides) {
+	apply := func(token string, e EndpointOverrides) {
+		if token != "" {
+			r.Token = token
+		}
 		if e.API != "" {
 			r.BaseURL = e.API
 		}
 	}
 
-	apply(c.Endpoints)
+	apply(c.Token, c.Endpoints)
 
 	if profile != "" {
 		p, ok := c.Profiles[profile]
 		if !ok {
 			return Resolved{}, fmt.Errorf("unknown profile %q; %s", profile, availableProfiles(c.Profiles))
 		}
-		apply(p.Endpoints)
+		apply(p.Token, p.Endpoints)
 	}
 
 	return r, nil

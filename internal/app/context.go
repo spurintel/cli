@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/spurintel/cli/internal/auth"
 	"github.com/spurintel/cli/internal/spur"
 )
 
@@ -47,7 +48,8 @@ func newContextCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			"report per IP, in input order.\n\n" +
 			"Output is a styled report at a terminal and newline-delimited JSON when " +
 			"piped or redirected; use --format to override.\n\n" +
-			"Authentication uses the SPUR_TOKEN environment variable.",
+			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
+			"then the OS keychain; run `spur auth` to store one.",
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dt, err := spur.ValidateHistoricalDate(f.date)
@@ -66,7 +68,7 @@ func newContextCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 				return errors.New("no IPs provided; pass IPs as arguments or pipe them on stdin")
 			}
 
-			token, err := resolveToken()
+			token, err := resolveToken(cf.resolved.Token)
 			if err != nil {
 				return err
 			}
@@ -94,14 +96,16 @@ func newContextCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	return cmd
 }
 
-// resolveToken returns the Spur API token. For this cut it comes solely from
-// the SPUR_TOKEN environment variable; config-file and keychain sources are
-// deferred to a later ticket.
-func resolveToken() (string, error) {
-	if t := os.Getenv("SPUR_TOKEN"); t != "" {
-		return t, nil
+// resolveToken returns the Spur API token using the shared precedence
+// env → config → keychain. cfgToken is the token from the resolved config
+// (empty when the config supplies none). A total miss becomes an actionable
+// message listing every way to provide a token.
+func resolveToken(cfgToken string) (string, error) {
+	tok, err := auth.Resolve(os.Getenv(auth.EnvVar), cfgToken, auth.DefaultKeyring())
+	if errors.Is(err, auth.ErrNoToken) {
+		return "", errors.New("no Spur API token found; set SPUR_TOKEN, add a token to your config, or run `spur auth` to store one — get a token at https://app.spur.us/settings/api")
 	}
-	return "", errors.New("SPUR_TOKEN is not set; get a token from https://app.spur.us/settings/api")
+	return tok, err
 }
 
 // gatherIPs collects candidate IP strings from positional arguments or, when
