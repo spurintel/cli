@@ -27,6 +27,10 @@ type kv struct {
 func renderText(w io.Writer, color bool, v any) error {
 	s := newStyles(w, color)
 	switch c := v.(type) {
+	case spur.Status:
+		return renderStatus(w, s, c)
+	case *spur.Status:
+		return renderStatus(w, s, *c)
 	case spur.IPContext:
 		return renderIPContext(w, s, c)
 	case *spur.IPContext:
@@ -115,6 +119,29 @@ func renderIPContext(w io.Writer, s Styles, c spur.IPContext) error {
 	return err
 }
 
+// renderStatus lays out a token-status report: a single block with the active
+// flag (as a colored ●/○ marker), queries remaining, and service tier. The
+// marker uses the Success/Warning palette so a healthy token reads at a glance;
+// the underlying bool is preserved verbatim in the JSON and CSV renderings.
+func renderStatus(w io.Writer, s Styles, st spur.Status) error {
+	marker := s.Warning.Render("○ inactive")
+	if st.Active {
+		marker = s.Success.Render("● active")
+	}
+
+	blk := block{values: []kv{
+		{"Active", preStyled(marker)},
+		{"Queries Remaining", st.QueriesRemaining},
+		{"Service Tier", st.ServiceTier},
+	}}
+
+	var b strings.Builder
+	fmt.Fprintln(&b, s.Title.Render("◆  Token Status"))
+	writeBlock(&b, s, blk, true)
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 // writeBlock renders one block: a connector + name line, then a │-prefixed row
 // per value with keys padded to a common width for alignment.
 func writeBlock(b *strings.Builder, s Styles, blk block, final bool) {
@@ -139,10 +166,18 @@ func writeBlock(b *strings.Builder, s Styles, blk block, final bool) {
 	}
 }
 
+// preStyled is a value the caller has already rendered to a styled string.
+// formatValue emits it verbatim so callers can inject markers with their own
+// color (e.g. the status active/inactive marker) without it being re-wrapped in
+// the default Value style.
+type preStyled string
+
 // formatValue renders a field value in a type-appropriate style, collapsing
 // absent scalars and empty slices to a muted placeholder.
 func formatValue(s Styles, v any) string {
 	switch val := v.(type) {
+	case preStyled:
+		return string(val)
 	case string:
 		if val == "" {
 			return s.Empty.Render("—")
