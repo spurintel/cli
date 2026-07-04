@@ -1,0 +1,25 @@
+# Binary
+/spur
+/bin/
+
+# Build output
+/dist/
+/completions/
+
+# Go test artifacts
+*.test
+*.out
+coverage.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Local agent / tooling artifacts (may contain tokens or private context)
+.claude/
+.mcp.json
+CLAUDE.local.md
+*.local.json
+.env
+.env.*

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# commit-msg hook: enforce Conventional Commits on the subject line.
+#
+# Format: <type>[(scope)][!]: <subject>   (scope optional)
+# Installed by pointing core.hooksPath at .githooks/.
+# Compatible with bash 3.2+ (macOS default). Bypass with --no-verify.
+
+set -u
+
+msg_file="${1:?commit-msg hook expects path to message file}"
+
+# First non-blank, non-comment line is the subject.
+subject=""
+while IFS= read -r line; do
+  case "$line" in
+    "") continue ;;
+    "#"*) continue ;;
+    *) subject="$line"; break ;;
+  esac
+done < "$msg_file"
+
+# Empty-message commits are git's concern, not ours.
+[[ -z "$subject" ]] && exit 0
+
+# Bypass git-generated messages and interactive-rebase markers.
+case "$subject" in
+  "Revert "*|"Merge "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
+esac
+
+# Conventional Commit type, optional (scope), optional ! for a breaking change.
+re='^(feat|fix|chore|refactor|docs|test|ci|build|perf|style)(\([^)]+\))?!?: .+'
+if ! [[ "$subject" =~ $re ]]; then
+  echo "commit-msg hook: subject does not match Conventional Commits." >&2
+  echo "  required: <type>[(scope)]: <subject>" >&2
+  echo "  example:  feat: add asn filter" >&2
+  echo "  got:      $subject" >&2
+  echo "" >&2
+  echo "Allowed types: feat, fix, chore, refactor, docs, test, ci, build, perf, style." >&2
+  exit 1
+fi
+
+# 72-char subject cap.
+if (( ${#subject} > 72 )); then
+  echo "commit-msg hook: subject is ${#subject} chars (max 72)." >&2
+  echo "  $subject" >&2
+  exit 1
+fi

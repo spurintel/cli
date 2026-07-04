@@ -1,0 +1,21 @@
+version: 2
+
+# Dependabot configuration. Add ecosystems as this repo grows.
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Uncomment and edit for your language:
+  # - package-ecosystem: "gomod"
+  #   directory: "/"
+  #   schedule: { interval: "weekly" }
+  # - package-ecosystem: "npm"
+  #   directory: "/"
+  #   schedule: { interval: "weekly" }
+  # - package-ecosystem: "pip"
+  #   directory: "/"
+  #   schedule: { interval: "weekly" }

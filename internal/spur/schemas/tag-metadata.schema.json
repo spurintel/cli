@@ -1,0 +1,355 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "The Tag Metadata Object",
+  "type": "object",
+  "properties": {
+    "allowsCrypto": {
+      "type": "string",
+      "description": "Whether the service supports or facilitates crypto-based payments or platforms."
+    },
+    "allowsFreeAccess": {
+      "type": "string",
+      "description": "Whether the service is available for free usage."
+    },
+    "allowsMultihop": {
+      "type": "string",
+      "description": "Whether the service offers multi-hop or chaining functionalities."
+    },
+    "allowsTorrents": {
+      "type": "string",
+      "description": "Whether the service permits torrent or P2P file-sharing traffic."
+    },
+    "allowsWhiteLabel": {
+      "type": "string",
+      "description": "Indicates whether white-label or rebranded versions of the service exist."
+    },
+    "categories": {
+      "type": "array",
+      "description": "Product categories for bandwidth reselling and routing.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "BLOCKCHAIN_VPN",
+          "CDN_PROXY",
+          "COMMERCIAL_VPN",
+          "DATACENTER_PROXY",
+          "ENTERPRISE_VPN",
+          "FREE_VPN",
+          "ISP_PROXY",
+          "MOBILE_PROXY",
+          "P2P_PROXY",
+          "PUBLIC_PROXY",
+          "RESIDENTIAL_PROXY",
+          "ZTNA_PROVIDER"
+        ],
+        "oneOf": [
+          {
+            "const": "BLOCKCHAIN_VPN",
+            "description": "Distributed VPN service leveraging blockchain technology for monetization and discovery."
+          },
+          {
+            "const": "CDN_PROXY",
+            "description": "Proxies routing traffic through major CDNs like Cloudflare or Fastly."
+          },
+          {
+            "const": "COMMERCIAL_VPN",
+            "description": "Commercial VPN typically hosted in datacenter environments."
+          },
+          {
+            "const": "DATACENTER_PROXY",
+            "description": "Proxy systems operating in datacenter networks."
+          },
+          {
+            "const": "ENTERPRISE_VPN",
+            "description": "VPN services used by enterprises for security, often non-anonymous."
+          },
+          {
+            "const": "FREE_VPN",
+            "description": "Free VPN services, often with limited features or bandwidth."
+          },
+          {
+            "const": "ISP_PROXY",
+            "description": "Proxies using residential or ISP-based networks."
+          },
+          {
+            "const": "MOBILE_PROXY",
+            "description": "Proxies utilizing mobile networks, often over 4G/LTE."
+          },
+          {
+            "const": "P2P_PROXY",
+            "description": "Proxy services that rely on volunteer or peer-to-peer networks (e.g., Tor)."
+          },
+          {
+            "const": "PUBLIC_PROXY",
+            "description": "Open proxies that are unrestricted and often publicly listed or discovered."
+          },
+          {
+            "const": "RESIDENTIAL_PROXY",
+            "description": "Endpoint-based proxies leveraging residential IPs obtained via SDK or pay-to-use programs."
+          },
+          {
+            "const": "ZTNA_PROVIDER",
+            "description": "Zero-trust security solutions, often enterprise-focused and non-anonymizing."
+          }
+        ]
+      }
+    },
+    "description": {
+      "type": "string",
+      "description": "A free-text description of the service or entity."
+    },
+    "isAnonymous": {
+      "type": "string",
+      "description": "Whether the service or infrastructure primarily aims to anonymize user traffic."
+    },
+    "isCallbackProxy": {
+      "type": "string",
+      "description": "Whether the service includes callback or reverse-proxy functionalities."
+    },
+    "isEnterprise": {
+      "type": "string",
+      "description": "Whether the service or platform is oriented toward enterprise usage."
+    },
+    "isInactive": {
+      "type": "string",
+      "description": "Whether the service is currently inactive or defunct."
+    },
+    "isNoLog": {
+      "type": "string",
+      "description": "Whether the service claims a 'no logging' policy."
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "averageDeviceCount": {
+          "type": "string",
+          "description": "Average estimated number of devices or endpoints using the service."
+        },
+        "churnRate": {
+          "type": "string",
+          "description": "Estimated turnover of IP addresses or endpoints over time."
+        },
+        "distinctASNs": {
+          "type": "string",
+          "description": "Number of unique Autonomous Systems observed for this service."
+        },
+        "distinctCountries": {
+          "type": "string",
+          "description": "Number of distinct countries where endpoints for this service reside."
+        },
+        "distinctIPs": {
+          "type": "string",
+          "description": "Number of distinct IP addresses observed for this service."
+        },
+        "distinctISPs": {
+          "type": "string",
+          "description": "Number of distinct ISPs hosting this service or its endpoints."
+        }
+      },
+      "required": [
+        "averageDeviceCount",
+        "churnRate",
+        "distinctASNs",
+        "distinctCountries",
+        "distinctIPs",
+        "distinctISPs"
+      ],
+      "additionalProperties": false
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name of the service or entity."
+    },
+    "platforms": {
+      "type": "array",
+      "description": "Operating systems and environments supported by this service.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "ANDROID",
+          "BROWSER",
+          "CUSTOM",
+          "IOS",
+          "LINUX",
+          "MACOS",
+          "ROUTER",
+          "WINDOWS"
+        ],
+        "oneOf": [
+          {
+            "const": "ANDROID",
+            "description": "Google’s mobile operating system."
+          },
+          {
+            "const": "BROWSER",
+            "description": "Web browsers and similar runtime environments."
+          },
+          {
+            "const": "CUSTOM",
+            "description": "Custom or otherwise unspecified OS or environment."
+          },
+          {
+            "const": "IOS",
+            "description": "Apple’s iPhone and iPad operating system."
+          },
+          {
+            "const": "LINUX",
+            "description": "Unix-like operating system kernels and distributions."
+          },
+          {
+            "const": "MACOS",
+            "description": "Desktop operating system from Apple."
+          },
+          {
+            "const": "ROUTER",
+            "description": "Firmware or operating system for routing and network devices."
+          },
+          {
+            "const": "WINDOWS",
+            "description": "Microsoft’s desktop operating system."
+          }
+        ]
+      }
+    },
+    "protocols": {
+      "type": "array",
+      "description": "Protocols or services used for network traffic.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "HTTP",
+          "IPSEC",
+          "L2TP",
+          "OPENVPN",
+          "PPTP",
+          "SHADOWSOCKS",
+          "SOCKS",
+          "VMESS",
+          "V2RAY",
+          "TROJAN",
+          "WIREGUARD",
+          "PROPRIETARY"
+        ],
+        "oneOf": [
+          {
+            "const": "HTTP",
+            "description": "Standard hypertext transfer protocol for web traffic."
+          },
+          {
+            "const": "IPSEC",
+            "description": "Encrypted IP security protocol suite."
+          },
+          {
+            "const": "L2TP",
+            "description": "Layer 2 Tunneling Protocol for secure VPN connections."
+          },
+          {
+            "const": "OPENVPN",
+            "description": "Popular open-source VPN protocol."
+          },
+          {
+            "const": "PPTP",
+            "description": "Point-to-Point Tunneling Protocol for older VPN connections."
+          },
+          {
+            "const": "SHADOWSOCKS",
+            "description": "Secure proxy protocol built for censorship circumvention."
+          },
+          {
+            "const": "SOCKS",
+            "description": "Proxy protocol that relays TCP/UDP traffic."
+          },
+          {
+            "const": "VMESS",
+            "description": "Encryption/transport protocol used by V2Ray."
+          },
+          {
+            "const": "V2RAY",
+            "description": "Platform supporting encrypted traffic and multiple protocols."
+          },
+          {
+            "const": "TROJAN",
+            "description": "Encrypted proxy protocol designed to imitate HTTPS."
+          },
+          {
+            "const": "WIREGUARD",
+            "description": "Modern, high-performance VPN protocol."
+          },
+          {
+            "const": "PROPRIETARY",
+            "description": "Non-standard or private/closed-source protocol."
+          }
+        ]
+      }
+    },
+    "tag": {
+      "type": "string",
+      "description": "Unique identifier or tag for this service or entity."
+    },
+    "targetingTypes": {
+      "type": "array",
+      "description": "Possible granularities for configuring a service exit or route.",
+      "items": {
+        "type": "string",
+        "enum": ["IP", "CIDR", "ASN", "CITY", "STATE", "COUNTRY", "ZIP"],
+        "oneOf": [
+          {
+            "const": "IP",
+            "description": "Traffic targeting by a specific IP."
+          },
+          {
+            "const": "CIDR",
+            "description": "Users may route traffic through any IP in a CIDR block."
+          },
+          {
+            "const": "ASN",
+            "description": "Users may route traffic through any IP in a provided ASN."
+          },
+          {
+            "const": "CITY",
+            "description": "Users may route traffic through a specific city."
+          },
+          {
+            "const": "STATE",
+            "description": "Users may route traffic through a state or province."
+          },
+          {
+            "const": "COUNTRY",
+            "description": "Users may route traffic through a specific country."
+          },
+          {
+            "const": "ZIP",
+            "description": "Typically US-only, targeting by ZIP code."
+          }
+        ]
+      }
+    },
+    "website": {
+      "type": "string",
+      "format": "uri",
+      "description": "Primary website or homepage for the service."
+    }
+  },
+  "required": [
+    "allowsCrypto",
+    "allowsFreeAccess",
+    "allowsMultihop",
+    "allowsTorrents",
+    "allowsWhiteLabel",
+    "categories",
+    "description",
+    "isAnonymous",
+    "isCallbackProxy",
+    "isEnterprise",
+    "isInactive",
+    "isNoLog",
+    "metrics",
+    "name",
+    "platforms",
+    "protocols",
+    "tag",
+    "targetingTypes",
+    "website"
+  ],
+  "additionalProperties": false
+}

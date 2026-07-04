@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# pre-push hook: validate branch names follow <type>/<description>.
+#
+# Installed by pointing core.hooksPath at .githooks/.
+# Compatible with bash 3.2+ (macOS default). Bypass with --no-verify.
+
+set -u
+
+branch_re='^(feat|fix|chore|refactor|docs|test)/.+'
+zero_sha='0000000000000000000000000000000000000000'
+
+# stdin: <local-ref> <local-sha> <remote-ref> <remote-sha>, one push per line.
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z "${local_ref:-}" ]] && continue
+  # Skip deletions.
+  [[ "$local_sha" == "$zero_sha" ]] && continue
+  # Only validate branch pushes; tags and other refs pass through.
+  case "$local_ref" in
+    refs/heads/*) ;;
+    *) continue ;;
+  esac
+  branch="${local_ref#refs/heads/}"
+
+  # Bot-generated branches are exempt.
+  case "$branch" in
+    release-please--*|dependabot/*) continue ;;
+  esac
+
+  if ! [[ "$branch" =~ $branch_re ]]; then
+    echo "pre-push hook: branch '$branch' does not match <type>/<description>." >&2
+    echo "  example:  feat/add-asn-filter" >&2
+    echo "  types:    feat, fix, chore, refactor, docs, test" >&2
+    exit 1
+  fi
+done
+
+exit 0

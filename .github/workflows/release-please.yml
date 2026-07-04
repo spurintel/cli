@@ -1,0 +1,33 @@
+name: Release Please
+
+# Derives version bumps from Conventional Commits. On push to main, opens or
+# updates a Release PR that bumps the version file(s) and CHANGELOG. Merging
+# that PR tags + releases automatically.
+#
+# Uses a short-lived token minted via the spurintelbot GitHub App so release
+# PRs bypass the first-time-contributor gate and can trigger downstream CI.
+# The default GITHUB_TOKEN can't do either (GitHub's loop-prevention rule).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Manual re-trigger via `gh workflow run release-please.yml`.
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
