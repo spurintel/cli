@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/spurintel/cli/internal/spur"
 )

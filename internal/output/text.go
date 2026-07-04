@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/spurintel/cli/internal/spur"
@@ -28,35 +28,38 @@ type kv struct {
 // to lay out. Anything else falls back to JSON so the renderer never refuses a
 // value outright; styled layouts are added per entity as commands land.
 func renderText(w io.Writer, color bool, v any) error {
+	// Styles and width come from the raw destination; the writes themselves go
+	// through the profile writer, which degrades ANSI to what w supports.
 	s := newStyles(w, color)
 	width := terminalWidth(w)
+	cw := Writer(w, color)
 	switch c := v.(type) {
 	case spur.Status:
-		return renderStatus(w, s, width, c)
+		return renderStatus(cw, s, width, c)
 	case *spur.Status:
-		return renderStatus(w, s, width, *c)
+		return renderStatus(cw, s, width, *c)
 	case spur.TagMetadata:
-		return renderTagMetadata(w, s, width, c)
+		return renderTagMetadata(cw, s, width, c)
 	case *spur.TagMetadata:
-		return renderTagMetadata(w, s, width, *c)
+		return renderTagMetadata(cw, s, width, *c)
 	case spur.FeedMetadata:
-		return renderFeedMetadata(w, s, width, c)
+		return renderFeedMetadata(cw, s, width, c)
 	case *spur.FeedMetadata:
-		return renderFeedMetadata(w, s, width, *c)
+		return renderFeedMetadata(cw, s, width, *c)
 	case []spur.FeedType:
-		return renderFeedTypes(w, s, width, c)
+		return renderFeedTypes(cw, s, width, c)
 	case spur.IPContext:
-		return renderIPContext(w, s, width, c)
+		return renderIPContext(cw, s, width, c)
 	case *spur.IPContext:
-		return renderIPContext(w, s, width, *c)
+		return renderIPContext(cw, s, width, *c)
 	case []spur.IPContext:
 		for i := range c {
 			if i > 0 {
-				if _, err := io.WriteString(w, "\n"); err != nil {
+				if _, err := io.WriteString(cw, "\n"); err != nil {
 					return err
 				}
 			}
-			if err := renderIPContext(w, s, width, c[i]); err != nil {
+			if err := renderIPContext(cw, s, width, c[i]); err != nil {
 				return err
 			}
 		}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/spurintel/cli/internal/output"
 )
@@ -20,9 +20,11 @@ type progressLine struct {
 	label string
 }
 
-// newProgressLine binds a progress bar to w, styled when color is true.
+// newProgressLine binds a progress bar to w, styled when color is true. The
+// stored writer is profile-aware: styled draws are degraded (or stripped) to
+// what w supports.
 func newProgressLine(w io.Writer, color bool, label string) *progressLine {
-	return &progressLine{w: w, s: output.NewStyles(w, color), label: label}
+	return &progressLine{w: output.Writer(w, color), s: output.NewStyles(w, color), label: label}
 }
 
 // progressReader wraps a reader and draws a single self-overwriting transfer

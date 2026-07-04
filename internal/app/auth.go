@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	"charm.land/huh/v2"
 	"github.com/spf13/cobra"
 
 	"github.com/spurintel/cli/internal/auth"
@@ -75,7 +75,7 @@ func newAuthCmd(of *outputFlags) *cobra.Command {
 // already stored it first asks for confirmation before overwriting, returning
 // errAuthCancelled if the user declines. The returned token is trimmed and
 // guaranteed non-empty.
-func promptForToken(kr auth.Keyring, theme *huh.Theme) (string, error) {
+func promptForToken(kr auth.Keyring, theme huh.Theme) (string, error) {
 	if existing, err := kr.Get(); err == nil && existing != "" {
 		overwrite := false
 		confirm := huh.NewConfirm().
