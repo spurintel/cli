@@ -1,0 +1,100 @@
+# GoReleaser builds the `spur` binary for six platforms on tag push, injects the
+# version via ldflags, publishes a GitHub release with checksums, and updates the
+# Homebrew cask in spurintel/homebrew-tap. Triggered by the v* tag release-please
+# creates on merge to main; the version comes from that tag.
+#
+# YAML uses spaces (the tabs policy excludes YAML per the spec). Validate with
+# `goreleaser check`; dry-run with `goreleaser release --snapshot --clean`.
+version: 2
+
+project_name: spur
+
+before:
+  hooks:
+    - go mod tidy
+    - ./scripts/completions.sh
+
+builds:
+  - id: spur
+    main: ./cmd/spur
+    binary: spur
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/spurintel/cli/internal/buildinfo.Version={{.Version}}
+      - -X github.com/spurintel/cli/internal/buildinfo.BuildStamp={{.Date}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - completions/*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^ci:"
+      - "^test:"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  draft: false
+  prerelease: auto
+
+homebrew_casks:
+  - name: spur
+    binaries: [spur]
+    homepage: https://github.com/spurintel/cli
+    description: Official command-line interface for the Spur Context API
+    directory: Casks
+    repository:
+      owner: spurintel
+      name: homebrew-tap
+    commit_author:
+      name: spurintelbot
+      email: bot@spur.us
+    completions:
+      bash: completions/spur.bash
+      zsh: completions/spur.zsh
+      fish: completions/spur.fish
+    # GoReleaser ships an unsigned binary; strip the macOS quarantine flag on
+    # install so Gatekeeper doesn't block first launch.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/spur"]
+          end

@@ -2,6 +2,10 @@
 /spur
 /bin/
 
+# Build output
+/dist/
+/completions/
+
 # Go test artifacts
 *.test
 *.out
