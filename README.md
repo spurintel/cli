@@ -33,15 +33,13 @@ See [MCP server (Claude Desktop and friends)](#mcp-server-claude-desktop-and-fri
 
 ## Demos
 
-| Authenticate & check status | Token status |
-| - | - |
+| Authenticate & check status            | Token status                               |
+| -------------------------------------- | ------------------------------------------ |
 | ![spur auth demo](docs/demos/auth.gif) | ![spur status demo](docs/demos/status.gif) |
 
-| Look up an IP (`context`) | Inspect a service tag (`tag`) |
-| - | - |
+| Look up an IP (`context`)                    | Inspect a service tag (`tag`)        |
+| -------------------------------------------- | ------------------------------------ |
 | ![spur context demo](docs/demos/context.gif) | ![spur tag demo](docs/demos/tag.gif) |
-
-<sub>GIFs are generated with [VHS](https://github.com/charmbracelet/vhs) from the tapes in [`docs/demos/`](docs/demos/) — run `vhs docs/demos/context.tape` to re-record.</sub>
 
 ## Install
 
@@ -94,17 +92,17 @@ An invalid, forbidden, or rate-limited token produces a clear, actionable error 
 
 ```text
 spur
-	context        Look up Spur context for one or more IPs
-	status         Report token status: active, queries remaining, tier
-	tag            Look up metadata for a service tag (proxy/VPN brand)
-	feed list      List the supported data-feed types
-	feed status    Show a feed's current metadata (date, timestamps, size)
-	feed download  Download a feed's data file
-	export         Export a filtered subset of a feed (Exports API)
-	mcp            Run the Model Context Protocol server (stdio)
-	auth           Store or remove your token in the OS keychain
-	completion     Generate a shell completion script
-	version        Print the build version
+ context        Look up Spur context for one or more IPs
+ status         Report token status: active, queries remaining, tier
+ tag            Look up metadata for a service tag (proxy/VPN brand)
+ feed list      List the supported data-feed types
+ feed status    Show a feed's current metadata (date, timestamps, size)
+ feed download  Download a feed's data file
+ export         Export a filtered subset of a feed (Exports API)
+ mcp            Run the Model Context Protocol server (stdio)
+ auth           Store or remove your token in the OS keychain
+ completion     Generate a shell completion script
+ version        Print the build version
 ```
 
 Run `spur <command> --help` for the full flag reference on any command.
@@ -178,7 +176,7 @@ spur export anonymous --tags NORD_VPN --format json
 spur export anonymous --diff
 ```
 
-Filters include `--ccs`, `--asns`, `--tags`, `--attributed`, `--callback-proxies`, `--fields`, `--limit`, and `--diff`/`--diff-date`; a filter the chosen feed doesn't accept is rejected before any request is made. Here `--format` selects the *server's* output format (`csv`, `json`, or `mmdb` — mmdb is binary and must go to a file via `-o`). The Exports API is rate-limited per token; a 429 is reported clearly so you can back off and retry.
+Filters include `--ccs`, `--asns`, `--tags`, `--attributed`, `--callback-proxies`, `--fields`, `--limit`, and `--diff`/`--diff-date`; a filter the chosen feed doesn't accept is rejected before any request is made. Here `--format` selects the _server's_ output format (`csv`, `json`, or `mmdb` — mmdb is binary and must go to a file via `-o`). The Exports API is rate-limited per token; a 429 is reported clearly so you can back off and retry.
 
 ### `spur completion` — shell completion
 
@@ -260,13 +258,13 @@ Add the server to `claude_desktop_config.json` — on macOS at `~/Library/Applic
 
 ```json
 {
-	"mcpServers": {
-		"spur": {
-			"command": "spur",
-			"args": ["mcp"],
-			"env": { "SPUR_TOKEN": "your-token-here" }
-		}
-	}
+  "mcpServers": {
+    "spur": {
+      "command": "spur",
+      "args": ["mcp"],
+      "env": { "SPUR_TOKEN": "your-token-here" }
+    }
+  }
 }
 ```
 
@@ -276,15 +274,15 @@ Other MCP clients (Cursor, Codex CLI, LM Studio, …) work the same way: command
 
 ### What the server exposes
 
-| Tool | Purpose |
-| - | - |
-| `get_ip_context` | IP context for one address or a batch (risks, services, tunnels, geo, AS) |
-| `get_tag_metadata` | Service-tag metadata: categories, anonymity, platforms, metrics |
-| `get_api_status` | Token status: active flag, queries remaining, tier |
-| `explain_enum` | Offline, schema-backed lookup of Context API enum values |
-| `format_assessment` | Renders a validated, customer-facing assessment from lookup results |
-| `list_feeds` / `feed_status` / `feed_download` | Feed catalog, metadata, and bounded downloads |
-| `export` | Bounded filtered exports from the Exports API |
+| Tool                                           | Purpose                                                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `get_ip_context`                               | IP context for one address or a batch (risks, services, tunnels, geo, AS) |
+| `get_tag_metadata`                             | Service-tag metadata: categories, anonymity, platforms, metrics           |
+| `get_api_status`                               | Token status: active flag, queries remaining, tier                        |
+| `explain_enum`                                 | Offline, schema-backed lookup of Context API enum values                  |
+| `format_assessment`                            | Renders a validated, customer-facing assessment from lookup results       |
+| `list_feeds` / `feed_status` / `feed_download` | Feed catalog, metadata, and bounded downloads                             |
+| `export`                                       | Bounded filtered exports from the Exports API                             |
 
 It also serves the Spur JSON schemas and API docs as resources, and an `assess_ip` prompt that runs the analyst playbook end-to-end for one IP.
 
@@ -292,15 +290,15 @@ It also serves the Spur JSON schemas and API docs as resources, and an `assess_i
 
 `spur` replaces `spurctx`. One name everywhere now — Homebrew and `go install` both produce a binary called `spur` — and lookups move from single-letter flags to a subcommand:
 
-| Before | After |
-| - | - |
-| `spurctx -ip 1.2.3.4,5.6.7.8` | `spur context 1.2.3.4 5.6.7.8` |
-| `spurctx -f ips.txt` | `spur context < ips.txt` |
-| `echo 1.1.1.1 \| spurctx` | `echo 1.1.1.1 \| spur context` |
-| `spurctx -g` (garbage mode) | `spur context --extract` |
-| `spurctx -gf messy.txt` | `spur context --extract < messy.txt` |
-| `spurctx -n 50` | `spur context --parallelism 50` |
-| `brew install spurintel/spurintel/spurctx` | `brew install spurintel/tap/spur` |
+| Before                                               | After                                                 |
+| ---------------------------------------------------- | ----------------------------------------------------- |
+| `spurctx -ip 1.2.3.4,5.6.7.8`                        | `spur context 1.2.3.4 5.6.7.8`                        |
+| `spurctx -f ips.txt`                                 | `spur context < ips.txt`                              |
+| `echo 1.1.1.1 \| spurctx`                            | `echo 1.1.1.1 \| spur context`                        |
+| `spurctx -g` (garbage mode)                          | `spur context --extract`                              |
+| `spurctx -gf messy.txt`                              | `spur context --extract < messy.txt`                  |
+| `spurctx -n 50`                                      | `spur context --parallelism 50`                       |
+| `brew install spurintel/spurintel/spurctx`           | `brew install spurintel/tap/spur`                     |
 | `go install github.com/spurintel/spurctx-cli@latest` | `go install github.com/spurintel/cli/cmd/spur@latest` |
 
 Your pipelines keep working: piped output is still JSON (one object per IP), and `SPUR_TOKEN` is still honored. What's new on top: styled terminal output, `status`/`tag`/`feed`/`export`, secure token storage with `spur auth`, config profiles, shell completion, and the MCP server.
