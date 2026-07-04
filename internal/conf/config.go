@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -107,6 +108,39 @@ func LoadDefault() (Config, error) {
 		return Config{}, nil
 	}
 	return c, err
+}
+
+// LoosePermissionsWarning returns a warning message when the config file at
+// path stores an API token (top-level or in any profile) but is readable or
+// writable by other users, or "" when there is nothing to warn about. The
+// token is a credential: like ssh and gh, the CLI keeps working but tells the
+// user to tighten the mode. File modes are not meaningful on Windows, so the
+// check is skipped there.
+func LoosePermissionsWarning(path string, c Config) string {
+	if runtime.GOOS == "windows" || !hasToken(c) {
+		return ""
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Sprintf("config file %s contains an API token but is accessible to other users (mode %04o); run: chmod 600 %s", path, perm, path)
+	}
+	return ""
+}
+
+// hasToken reports whether the config carries a token anywhere.
+func hasToken(c Config) bool {
+	if c.Token != "" {
+		return true
+	}
+	for _, p := range c.Profiles {
+		if p.Token != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Resolve merges the config over defaults and returns the effective settings.

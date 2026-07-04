@@ -102,11 +102,18 @@ func main() {
 	}
 
 	var writtenDocs []string
+	// Output names derive from each page's directory, so two mdx files in one
+	// directory would silently overwrite each other; fail loudly instead.
+	byDst := map[string]string{}
 	for _, src := range mdxFiles {
 		dst, err := cleanMDXFile(src, cfg)
 		if err != nil {
 			fail(fmt.Errorf("clean %s: %w", src, err))
 		}
+		if prev, ok := byDst[dst]; ok {
+			fail(fmt.Errorf("output name collision: %s and %s both map to %s", prev, src, dst))
+		}
+		byDst[dst] = src
 		writtenDocs = append(writtenDocs, dst)
 	}
 
@@ -167,29 +174,26 @@ func cleanMDXFile(src string, cfg cleanConfig) (string, error) {
 	}
 	cleaned := cleanMDX(string(raw), cfg.schemaVarURI)
 
+	// The docs repo lays out one page.mdx per directory, so the directory name
+	// is the page's identity; the root context-api page becomes "overview".
 	base := filepath.Base(filepath.Dir(src))
-	name := filepath.Base(src)
-	if strings.EqualFold(name, "page.mdx") {
-		name = base + ".md"
-	} else {
-		name = strings.TrimSuffix(name, filepath.Ext(name)) + ".md"
-	}
-	dst := filepath.Join(cfg.outDocsDir, "context-api-"+name)
+	name := "context-api-" + base + ".md"
 	if base == "context-api" {
-		dst = filepath.Join(cfg.outDocsDir, "context-api-overview.md")
+		name = "context-api-overview.md"
 	}
-	if base != "context-api" {
-		dst = filepath.Join(cfg.outDocsDir, "context-api-"+base+".md")
-	}
+	dst := filepath.Join(cfg.outDocsDir, name)
 	if err := os.WriteFile(dst, []byte(cleaned), 0o644); err != nil {
 		return "", err
 	}
 	return dst, nil
 }
 
-// reImportLine strips `import { ... } from '...'` including multi-line forms.
-var reImportBlock = regexp.MustCompile(`(?m)^import\s[^;]*?;?\s*$`)
-var reImportMulti = regexp.MustCompile(`(?s)^import\s.*?from\s+['"][^'"]+['"];?\s*$`)
+// reImport strips `import ... from '...'` statements, including multi-line
+// named-import blocks (the negated character class crosses newlines), and bare
+// side-effect imports (`import './x.css'`). Anchored to a line start and to a
+// line end right after the module specifier so it never eats past the
+// statement.
+var reImport = regexp.MustCompile(`(?m)^import\s(?:[^'"]*?from\s*)?['"][^'"]+['"];?[ \t]*$`)
 
 // reExportMetadata strips `export const metadata = { ... }` across newlines.
 var reExportMetadata = regexp.MustCompile(`(?s)export\s+const\s+metadata\s*=\s*\{.*?\}\s*;?`)
@@ -210,8 +214,7 @@ var reCodeFence = regexp.MustCompile("^\\s*```")
 func cleanMDX(input string, schemaURIs map[string]string) string {
 	s := input
 
-	s = reImportMulti.ReplaceAllString(s, "")
-	s = reImportBlock.ReplaceAllString(s, "")
+	s = reImport.ReplaceAllString(s, "")
 	s = reExportMetadata.ReplaceAllString(s, "")
 	s = reExportConstLine.ReplaceAllString(s, "")
 
@@ -255,10 +258,7 @@ func unwrapJSXWrappers(input string, tags []string) string {
 	for _, line := range lines {
 		if reCodeFence.MatchString(line) {
 			inCode = !inCode
-			if depth > 0 && !inCode {
-				// handled below via dedent path
-			}
-			out = append(out, maybeDedent(line, depth, inCode))
+			out = append(out, maybeDedent(line, depth))
 			continue
 		}
 		if !inCode {
@@ -287,7 +287,7 @@ func unwrapJSXWrappers(input string, tags []string) string {
 				continue
 			}
 		}
-		out = append(out, maybeDedent(line, depth, inCode))
+		out = append(out, maybeDedent(line, depth))
 	}
 	return strings.Join(out, "\n")
 }
@@ -295,7 +295,9 @@ func unwrapJSXWrappers(input string, tags []string) string {
 // maybeDedent strips up to (depth * 2) leading spaces from a line when we are
 // inside a JSX wrapper. MDX indents wrapper contents by two spaces per level;
 // the docs use four-space indent in practice so we cap at four for safety.
-func maybeDedent(line string, depth int, inCode bool) string {
+// Code lines are dedented the same way so fences start at column zero;
+// otherwise markdown treats them as indented blocks.
+func maybeDedent(line string, depth int) string {
 	if depth <= 0 {
 		return line
 	}
@@ -303,15 +305,11 @@ func maybeDedent(line string, depth int, inCode bool) string {
 	if strip > 4 {
 		strip = 4
 	}
-	// For code lines we still want to dedent the wrapping indentation so
-	// that fences start at column zero; otherwise markdown treats them as
-	// indented blockquotes.
 	removed := 0
 	for removed < strip && len(line) > 0 && line[0] == ' ' {
 		line = line[1:]
 		removed++
 	}
-	_ = inCode
 	return line
 }
 
@@ -334,11 +332,13 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return err
 	}
-	return nil
+	// The close flushes the write; ignoring its error could commit a
+	// truncated schema with a success exit.
+	return out.Close()
 }
 
 func fail(err error) {

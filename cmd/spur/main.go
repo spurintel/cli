@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -17,6 +18,12 @@ func main() {
 	defer cancel()
 
 	if err := app.Run(ctx); err != nil {
+		// Cancellation via Ctrl-C/SIGTERM is a deliberate stop, not a
+		// failure to report: exit silently with the conventional
+		// interrupted-by-signal code.
+		if errors.Is(err, context.Canceled) {
+			os.Exit(130)
+		}
 		fmt.Fprintf(os.Stderr, "spur: %v\n", err)
 		os.Exit(1)
 	}

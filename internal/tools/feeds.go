@@ -80,12 +80,12 @@ type FeedDownloadInput struct {
 // FeedDownloadOutput is a download pointer for a feed's data artifact: enough
 // metadata to decide whether to fetch it, plus the URL and command that do.
 type FeedDownloadOutput struct {
-	Type        string        `json:"type" jsonschema:"The feed type this pointer describes."`
-	Format      string        `json:"format" jsonschema:"The artifact format described: json or mmdb."`
-	File        spur.FeedFile `json:"file" jsonschema:"Metadata for the selected artifact: date, relative location, generation/availability timestamps, and filesize in bytes."`
-	DownloadURL string        `json:"download_url" jsonschema:"Absolute feeds-host URL of the artifact. It is authenticated with the Token header and 302-redirects to the CDN; it is not returned inline here."`
-	Command     string        `json:"command" jsonschema:"The spur CLI command that downloads this artifact."`
-	Note        string        `json:"note" jsonschema:"Why the bytes are not returned inline."`
+	Type        string         `json:"type" jsonschema:"The feed type this pointer describes."`
+	Format      string         `json:"format" jsonschema:"The artifact format described: json or mmdb."`
+	File        *spur.FeedFile `json:"file,omitempty" jsonschema:"Metadata for the latest artifact: date, relative location, generation/availability timestamps, and filesize in bytes. Omitted when a historical date is requested — the metadata document only describes the latest release."`
+	DownloadURL string         `json:"download_url" jsonschema:"Absolute feeds-host URL of the artifact. It is authenticated with the Token header and 302-redirects to the CDN; it is not returned inline here."`
+	Command     string         `json:"command" jsonschema:"The spur CLI command that downloads this artifact."`
+	Note        string         `json:"note" jsonschema:"Why the bytes are not returned inline."`
 }
 
 // registerFeedDownload wires the feed_download tool. Feeds are hundreds of
@@ -121,7 +121,10 @@ func registerFeedDownload(s *mcp.Server, c *spur.Client) {
 			return toolError(fmt.Errorf("invalid format %q", in.Format), "Use json (default) or mmdb."), FeedDownloadOutput{}, nil
 		}
 
-		date := strings.TrimSpace(in.Date)
+		date, err := spur.ValidateHistoricalDate(in.Date)
+		if err != nil {
+			return toolError(err, "Use YYYYMMDD for a historical release, or omit 'date' for the latest."), FeedDownloadOutput{}, nil
+		}
 		if date != "" && strings.HasSuffix(feedType.Name, "/realtime") {
 			return toolError(fmt.Errorf("the realtime feed does not support a historical date"), "Omit 'date' for the realtime feed."), FeedDownloadOutput{}, nil
 		}
@@ -131,16 +134,19 @@ func registerFeedDownload(s *mcp.Server, c *spur.Client) {
 			return toolError(err, statusHint(err)), FeedDownloadOutput{}, nil
 		}
 
-		file := md.JSON
+		file := &md.JSON
 		command := "spur feed download " + feedType.Name
 		if format == spur.FeedMMDB {
 			if md.MMDB == nil {
 				return toolError(fmt.Errorf("the %q feed is not offered in MMDB format", feedType.Name), "Request format json instead."), FeedDownloadOutput{}, nil
 			}
-			file = *md.MMDB
+			file = md.MMDB
 			command += " --mmdb"
 		}
 		if date != "" {
+			// The metadata document only describes the latest release; its
+			// dates and sizes would be wrong for a historical artifact.
+			file = nil
 			command += " --date " + date
 		}
 

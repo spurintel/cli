@@ -149,8 +149,15 @@ func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format
 		return nil, 0, fmt.Errorf("feed type is required")
 	}
 
-	endpoint := c.FeedArtifactURL(feedType, date, format)
+	return c.doStream(ctx, c.FeedArtifactURL(feedType, date, format))
+}
 
+// doStream issues an authenticated GET for a large artifact on the download
+// client (no overall timeout, Token stripped on cross-host redirects) and
+// returns the raw body stream plus the Content-Length (-1 when unknown). The
+// caller owns the body and must Close it. It is the shared request path for
+// DownloadFeed and ExportFeed.
+func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, 0, err
@@ -191,13 +198,21 @@ func (c *Client) downloadHTTPClient() *http.Client {
 }
 
 // stripTokenOnHostChange follows redirects but removes the Token header on any
-// hop that leaves the original host, so a pre-signed CDN URL never receives the
-// Spur credential. It also enforces Go's default 10-redirect ceiling.
+// hop that leaves the original host — so a pre-signed CDN URL never receives
+// the Spur credential — or that downgrades from HTTPS to plain HTTP, so the
+// token is never re-sent in cleartext. It also enforces Go's default
+// 10-redirect ceiling. It is the CheckRedirect policy for every client here:
+// Go's default only strips Authorization/Cookie cross-host, not custom headers.
 func stripTokenOnHostChange(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
-	if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+	if len(via) == 0 {
+		return nil
+	}
+	crossHost := req.URL.Host != via[0].URL.Host
+	downgraded := via[0].URL.Scheme == "https" && req.URL.Scheme != "https"
+	if crossHost || downgraded {
 		req.Header.Del("Token")
 	}
 	return nil

@@ -19,8 +19,7 @@ func Run(ctx context.Context) error {
 	}
 	// Diagnostics go to stderr so stdout stays a clean data channel (the
 	// context command prints JSON there).
-	slog.SetDefault(newLogger(os.Stderr))
-	_ = cfg // wire into subcommands as needed
+	slog.SetDefault(newLogger(os.Stderr, parseLogLevel(cfg.LogLevel)))
 
 	return newRootCmd().ExecuteContext(ctx)
 }
@@ -44,9 +43,16 @@ func newRootCmd() *cobra.Command {
 	// Validate output flags and resolve config once, before any command does
 	// network work, so a bad --format or unknown --profile never spends a
 	// metered API query.
-	cmd.PersistentPreRunE = func(*cobra.Command, []string) error {
+	cmd.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
 		if err := of.validate(); err != nil {
 			return err
+		}
+		// Commands that never consume the config must not be blocked by a
+		// malformed config file: completion runs from shell init (a TOML typo
+		// would break every new shell), and `spur auth --logout` is a
+		// recovery path.
+		if !needsConfig(c) {
+			return nil
 		}
 		return cf.resolve()
 	}
@@ -60,4 +66,18 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newCompletionCmd())
 	return cmd
+}
+
+// needsConfig reports whether the invoked command (or any of its ancestors)
+// consumes the resolved config. auth, version, completion, help, and cobra's
+// hidden shell-completion machinery are config-free by design.
+func needsConfig(c *cobra.Command) bool {
+	for cur := c; cur != nil; cur = cur.Parent() {
+		switch cur.Name() {
+		case "auth", "version", "completion", "help",
+			cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			return false
+		}
+	}
+	return true
 }

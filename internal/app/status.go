@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 
 	"github.com/spf13/cobra"
 
@@ -50,11 +49,7 @@ func newStatusCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 func fetchStatus(ctx context.Context, client *spur.Client) (spur.Status, error) {
 	status, err := client.GetStatus(ctx)
 	if err != nil {
-		var apiErr *spur.APIError
-		if errors.As(err, &apiErr) {
-			return spur.Status{}, errors.New(apiErr.Message())
-		}
-		return spur.Status{}, err
+		return spur.Status{}, collapseAPIError(err, nil)
 	}
 	return status, nil
 }

@@ -99,7 +99,7 @@ func TestDownloadFeedDecompressesToStdout(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, &dst, true, nil); err != nil {
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), true, nil); err != nil {
 		t.Fatalf("downloadFeed: %v", err)
 	}
 	if dst.String() != ndjson {
@@ -122,7 +122,7 @@ func TestDownloadFeedRawToFile(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, &dst, false, nil); err != nil {
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil); err != nil {
 		t.Fatalf("downloadFeed: %v", err)
 	}
 	if !bytes.Equal(dst.Bytes(), raw) {
@@ -144,7 +144,7 @@ func TestDownloadFeedForbiddenIsClear(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedJSONGzip, &dst, true, nil)
+	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedJSONGzip, bufSink(&dst), true, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -179,7 +179,7 @@ func TestDownloadMMDBNotOfferedIsClear(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedMMDB, &dst, false, nil)
+	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedMMDB, bufSink(&dst), false, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -213,7 +213,7 @@ func TestDownloadMMDBStreamsRaw(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedMMDB, &dst, true, nil); err != nil {
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedMMDB, bufSink(&dst), true, nil); err != nil {
 		t.Fatalf("downloadFeed: %v", err)
 	}
 	if dst.String() != mmdb {

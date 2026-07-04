@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -293,24 +292,5 @@ func (c *Client) ExportFeed(ctx context.Context, slug string, q url.Values) (io.
 	if enc := q.Encode(); enc != "" {
 		endpoint += "?" + enc
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Token", c.Token)
-	req.Header.Set("User-Agent", userAgent())
-
-	resp, err := c.downloadHTTPClient().Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
-		_ = resp.Body.Close()
-		return nil, 0, newAPIError(resp.StatusCode)
-	}
-
-	return resp.Body, resp.ContentLength, nil
+	return c.doStream(ctx, endpoint)
 }

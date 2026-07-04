@@ -39,11 +39,15 @@ type Client struct {
 	ExportsBase string
 }
 
-// NewClient constructs a Client with a sensible default timeout.
+// NewClient constructs a Client with a sensible default timeout. The redirect
+// policy strips the Token header on any hop that leaves the original host (or
+// downgrades to plain HTTP), so a redirect can never hand the credential to a
+// third party — Go's default policy only does this for Authorization/Cookie,
+// not custom headers.
 func NewClient(token string) *Client {
 	return &Client{
 		Token:       token,
-		HTTP:        &http.Client{Timeout: 15 * time.Second},
+		HTTP:        &http.Client{Timeout: 15 * time.Second, CheckRedirect: stripTokenOnHostChange},
 		Base:        BaseURL,
 		FeedsBase:   FeedsBaseURL,
 		ExportsBase: ExportsBaseURL,
@@ -127,15 +131,20 @@ func (c *Client) doJSON(ctx context.Context, endpoint string, dst any) (Meta, er
 	}
 	defer resp.Body.Close()
 
-	body, err := readBody(resp.Body, maxResponseBodyBytes)
-	if err != nil {
-		return Meta{}, err
-	}
-
 	meta := parseMeta(resp.Header)
 
+	// Classify the status before touching the body: an oversized upstream
+	// error page must not mask the status-mapped APIError (and we never
+	// surface error bodies anyway). Drain a bounded amount so the connection
+	// can be reused.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
 		return meta, newAPIError(resp.StatusCode)
+	}
+
+	body, err := readBody(resp.Body, maxResponseBodyBytes)
+	if err != nil {
+		return meta, err
 	}
 
 	if dst != nil {

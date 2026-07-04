@@ -77,12 +77,24 @@ func newContextCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 
 			results, failures := lookupContexts(cmd.Context(), client, ips, opts, f.parallelism)
 			for _, fail := range failures {
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s\n", fail.ip, fail.err)
+				// %q neutralizes ANSI/control sequences in a rejected
+				// candidate, which is attacker-influenced when a hostile log
+				// is piped through --extract.
+				fmt.Fprintf(cmd.ErrOrStderr(), "%q: %s\n", fail.ip, fail.err)
 			}
 			if len(results) == 0 {
 				return fmt.Errorf("no IPs could be looked up")
 			}
-			return of.emit(cmd, results)
+			if err := of.emit(cmd, results); err != nil {
+				return err
+			}
+			// Partial failures must fail the command: a script piping this
+			// output cannot otherwise tell that some of the batch is missing.
+			// The successes were already emitted, so nothing is lost.
+			if len(failures) > 0 {
+				return fmt.Errorf("%d of %d lookups failed", len(failures), len(ips))
+			}
+			return nil
 		},
 	}
 
@@ -118,7 +130,7 @@ func gatherIPs(cmd *cobra.Command, args []string, extract bool) ([]string, error
 	switch {
 	case len(args) > 0:
 		text = strings.Join(args, "\n")
-	case stdinIsPiped():
+	case stdinIsPiped(cmd):
 		b, err := io.ReadAll(cmd.InOrStdin())
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)
@@ -134,11 +146,17 @@ func gatherIPs(cmd *cobra.Command, args []string, extract bool) ([]string, error
 	return spur.SplitCandidates(text), nil
 }
 
-// stdinIsPiped reports whether stdin is a pipe or redirect rather than an
-// interactive terminal, so the command reads piped input but never blocks
-// waiting on a terminal that has nothing to give.
-func stdinIsPiped() bool {
-	return !term.IsTerminal(int(os.Stdin.Fd()))
+// stdinIsPiped reports whether the command's input is a pipe or redirect
+// rather than an interactive terminal, so the command reads piped input but
+// never blocks waiting on a terminal that has nothing to give. It inspects the
+// same handle gatherIPs reads (cmd.InOrStdin) so the decision and the data
+// source cannot diverge; a non-file source (a test-injected buffer) is always
+// readable input.
+func stdinIsPiped(cmd *cobra.Command) bool {
+	if f, ok := cmd.InOrStdin().(*os.File); ok {
+		return !term.IsTerminal(int(f.Fd()))
+	}
+	return true
 }
 
 // lookupFailure is a candidate that could not be looked up (invalid IP or an
@@ -213,11 +231,7 @@ func fetchContext(ctx context.Context, client *spur.Client, ip string, opts spur
 
 	result, _, err := client.GetIPContext(ctx, ip, opts)
 	if err != nil {
-		var apiErr *spur.APIError
-		if errors.As(err, &apiErr) {
-			return spur.IPContext{}, errors.New(apiErr.Message())
-		}
-		return spur.IPContext{}, err
+		return spur.IPContext{}, collapseAPIError(err, nil)
 	}
 	return result, nil
 }

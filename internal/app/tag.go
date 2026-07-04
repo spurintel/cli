@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -53,14 +52,9 @@ func newTagCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 func fetchTagMetadata(ctx context.Context, client *spur.Client, tag string) (spur.TagMetadata, error) {
 	result, err := client.GetTagMetadata(ctx, tag)
 	if err != nil {
-		var apiErr *spur.APIError
-		if errors.As(err, &apiErr) {
-			if errors.Is(apiErr, spur.ErrNotFound) {
-				return spur.TagMetadata{}, fmt.Errorf("unknown tag %q: no metadata found (tags are case-sensitive, e.g. OXYLABS_PROXY)", tag)
-			}
-			return spur.TagMetadata{}, errors.New(apiErr.Message())
-		}
-		return spur.TagMetadata{}, err
+		return spur.TagMetadata{}, collapseAPIError(err, map[error]string{
+			spur.ErrNotFound: fmt.Sprintf("unknown tag %q: no metadata found (tags are case-sensitive, e.g. OXYLABS_PROXY)", tag),
+		})
 	}
 	return result, nil
 }

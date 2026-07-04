@@ -1,16 +1,16 @@
 package app
 
 import (
-	"context"
 	"io"
 	"log/slog"
+	"strings"
 )
 
 // newLogger returns an slog.Logger that writes JSON with GCP Cloud Logging's
 // expected field names: "severity", "message", "time".
-func newLogger(w io.Writer) *slog.Logger {
+func newLogger(w io.Writer, level slog.Level) *slog.Logger {
 	h := slog.NewJSONHandler(w, &slog.HandlerOptions{
-		Level:     slog.LevelInfo,
+		Level:     level,
 		AddSource: false,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			switch a.Key {
@@ -38,17 +38,18 @@ func gcpSeverity(l slog.Level) string {
 	}
 }
 
-// LoggerFromContext returns a logger from ctx, or slog.Default() if none is set.
-func LoggerFromContext(ctx context.Context) *slog.Logger {
-	if l, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {
-		return l
+// parseLogLevel maps a LOG_LEVEL string onto an slog.Level. Unknown values
+// fall back to Info rather than erroring: a typo in a diagnostic knob should
+// never break the command itself.
+func parseLogLevel(s string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
 	}
-	return slog.Default()
 }
-
-// WithLogger attaches a logger to ctx.
-func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
-	return context.WithValue(ctx, loggerKey{}, l)
-}
-
-type loggerKey struct{}

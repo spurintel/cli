@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -99,20 +98,13 @@ func newExportCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			}
 			client := cf.newClient(token)
 
-			dst, closeOut, err := of.writer(cmd)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = closeOut() }()
-
 			// MMDB is binary; writing it to a terminal is never intended and
 			// would corrupt the display.
-			toStdout := of.output == "" || of.output == "-"
-			if f.format == "mmdb" && toStdout && output.IsTerminal(dst) {
+			if f.format == "mmdb" && of.toStdout() && output.IsTerminal(cmd.OutOrStdout()) {
 				return fmt.Errorf("refusing to write a binary MMDB export to the terminal; use -o <file>")
 			}
 
-			return streamExport(cmd.Context(), client, feed.Name, slug, q, dst)
+			return streamExport(cmd.Context(), client, feed.Name, slug, q, of.sink(cmd))
 		},
 	}
 
@@ -144,31 +136,36 @@ func newExportCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	return cmd
 }
 
-// streamExport calls the Exports client and copies the raw body to dst. It is
-// split from the cobra wiring so it can be exercised end-to-end against an
-// httptest server. API failures are collapsed to clear, actionable causes: a
-// rate limit (429) and a forbidden (403) each get a feed-aware message, and the
-// rest surface the client's stable, sanitized message — never a leaked upstream
-// body.
-func streamExport(ctx context.Context, client *spur.Client, feedName, slug string, q url.Values, dst io.Writer) error {
+// streamExport calls the Exports client and copies the raw body to the
+// destination opened by openSink. It is split from the cobra wiring so it can
+// be exercised end-to-end against an httptest server. API failures are
+// collapsed to clear, actionable causes: a rate limit (429) and a forbidden
+// (403) each get a feed-aware message, and the rest surface the client's
+// stable, sanitized message — never a leaked upstream body.
+//
+// The sink is opened only after the export request has succeeded, so a failed
+// request never creates or truncates the -o file; a close failure surfaces as
+// the command error since it means the file is incomplete.
+func streamExport(ctx context.Context, client *spur.Client, feedName, slug string, q url.Values, openSink func() (io.Writer, func() error, error)) error {
 	body, _, err := client.ExportFeed(ctx, slug, q)
 	if err != nil {
-		var apiErr *spur.APIError
-		if errors.As(err, &apiErr) {
-			switch {
-			case errors.Is(apiErr, spur.ErrThrottled):
-				return fmt.Errorf("the Exports API rate limit was exceeded; wait a moment and retry (exports are rate-limited per token)")
-			case errors.Is(apiErr, spur.ErrForbidden):
-				return fmt.Errorf("access to the %q export is denied: your token's subscription does not include it", feedName)
-			}
-			return errors.New(apiErr.Message())
-		}
-		return err
+		return collapseAPIError(err, map[error]string{
+			spur.ErrThrottled: "the Exports API rate limit was exceeded; wait a moment and retry (exports are rate-limited per token)",
+			spur.ErrForbidden: fmt.Sprintf("access to the %q export is denied: your token's subscription does not include it", feedName),
+		})
 	}
 	defer func() { _ = body.Close() }()
 
+	dst, closeOut, err := openSink()
+	if err != nil {
+		return err
+	}
 	if _, err := io.Copy(dst, body); err != nil {
+		_ = closeOut()
 		return fmt.Errorf("stream export: %w", err)
+	}
+	if err := closeOut(); err != nil {
+		return fmt.Errorf("close output: %w", err)
 	}
 	return nil
 }

@@ -1,6 +1,11 @@
 package app
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+
 	"github.com/spf13/cobra"
 
 	"github.com/spurintel/cli/internal/conf"
@@ -27,19 +32,34 @@ func (f *configFlags) register(cmd *cobra.Command) {
 
 // resolve loads the config and merges the selected profile over the built-in
 // production defaults. An explicit --config that is missing is an error; the
-// default path being absent is not (zero-config falls back to defaults).
+// default path being absent is not (zero-config falls back to defaults). A
+// config file that stores a token with loose permissions draws a stderr
+// warning — the token is a credential and should not be readable by other
+// local users.
 func (f *configFlags) resolve() error {
+	path := f.path
 	var (
 		cfg conf.Config
 		err error
 	)
-	if f.path != "" {
-		cfg, err = conf.Load(f.path)
+	if path != "" {
+		cfg, err = conf.Load(path)
 	} else {
-		cfg, err = conf.LoadDefault()
+		path, err = conf.DefaultPath()
+		if err != nil {
+			return err
+		}
+		cfg, err = conf.Load(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			cfg, err = conf.Config{}, nil
+		}
 	}
 	if err != nil {
 		return err
+	}
+
+	if warn := conf.LoosePermissionsWarning(path, cfg); warn != "" {
+		fmt.Fprintln(os.Stderr, "warning: "+warn)
 	}
 
 	r, err := cfg.Resolve(f.profile, conf.Resolved{
