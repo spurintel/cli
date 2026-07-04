@@ -54,6 +54,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newStatusCmd(of, cf))
 	cmd.AddCommand(newTagCmd(of, cf))
 	cmd.AddCommand(newFeedCmd(of, cf))
+	cmd.AddCommand(newExportCmd(of, cf))
 	cmd.AddCommand(newAuthCmd())
 	cmd.AddCommand(newMCPCmd(cf))
 	cmd.AddCommand(newVersionCmd())

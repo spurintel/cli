@@ -41,6 +41,8 @@ type EndpointOverrides struct {
 	API string `toml:"api"`
 	// Feeds overrides the base URL of the Spur Data Feeds API.
 	Feeds string `toml:"feeds"`
+	// Exports overrides the base URL of the Spur Exports API.
+	Exports string `toml:"exports"`
 }
 
 // Profile is a named set of overrides selected with --profile.
@@ -58,6 +60,9 @@ type Resolved struct {
 	BaseURL string
 	// FeedsBaseURL is the base the shared client should use for feed requests.
 	FeedsBaseURL string
+	// ExportsBaseURL is the base the shared client should use for export
+	// requests.
+	ExportsBaseURL string
 	// Token is the config-file API token, empty when the config supplies none.
 	Token string
 }
@@ -122,6 +127,9 @@ func (c Config) Resolve(profile string, defaults Resolved) (Resolved, error) {
 		}
 		if e.Feeds != "" {
 			r.FeedsBaseURL = e.Feeds
+		}
+		if e.Exports != "" {
+			r.ExportsBaseURL = e.Exports
 		}
 	}
 

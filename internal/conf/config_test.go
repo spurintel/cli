@@ -9,7 +9,7 @@ import (
 
 // prodDefaults is a stand-in for the built-in production settings the app layer
 // passes in (kept local so conf has no dependency on the client package).
-var prodDefaults = Resolved{BaseURL: "https://api.spur.us", FeedsBaseURL: "https://feeds.spur.us"}
+var prodDefaults = Resolved{BaseURL: "https://api.spur.us", FeedsBaseURL: "https://feeds.spur.us", ExportsBaseURL: "https://exports.spur.us"}
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
@@ -108,6 +108,46 @@ feeds = "http://localhost:9090"
 		// Overriding feeds must not disturb the Context API base.
 		if got.BaseURL != prodDefaults.BaseURL {
 			t.Errorf("Resolve(%q).BaseURL = %q, want default %q", tc.profile, got.BaseURL, prodDefaults.BaseURL)
+		}
+	}
+}
+
+func TestExportsEndpointOverride(t *testing.T) {
+	// The exports host overrides independently of the Context API and feeds
+	// hosts: overriding one must leave the others at their defaults.
+	path := writeConfig(t, `
+[endpoints]
+exports = "https://exports.staging.spur.us"
+
+[profiles.local.endpoints]
+exports = "http://localhost:9091"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cases := []struct {
+		profile     string
+		wantExports string
+	}{
+		{"", "https://exports.staging.spur.us"},
+		{"local", "http://localhost:9091"},
+	}
+	for _, tc := range cases {
+		got, err := cfg.Resolve(tc.profile, prodDefaults)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", tc.profile, err)
+		}
+		if got.ExportsBaseURL != tc.wantExports {
+			t.Errorf("Resolve(%q).ExportsBaseURL = %q, want %q", tc.profile, got.ExportsBaseURL, tc.wantExports)
+		}
+		// Overriding exports must not disturb the other hosts.
+		if got.BaseURL != prodDefaults.BaseURL {
+			t.Errorf("Resolve(%q).BaseURL = %q, want default %q", tc.profile, got.BaseURL, prodDefaults.BaseURL)
+		}
+		if got.FeedsBaseURL != prodDefaults.FeedsBaseURL {
+			t.Errorf("Resolve(%q).FeedsBaseURL = %q, want default %q", tc.profile, got.FeedsBaseURL, prodDefaults.FeedsBaseURL)
 		}
 	}
 }
