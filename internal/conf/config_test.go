@@ -95,7 +95,7 @@ api = "http://localhost:8080"
 		profile string
 		want    string
 	}{
-		{"", "https://api.top.spur.us"},         // no profile: top-level wins over default
+		{"", "https://api.top.spur.us"}, // no profile: top-level wins over default
 		{"staging", "https://api.staging.spur.us"},
 		{"local", "http://localhost:8080"},
 	}
