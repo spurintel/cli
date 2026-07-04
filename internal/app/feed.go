@@ -3,7 +3,6 @@ package app
 import (
 	"compress/gzip"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -140,6 +139,9 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if _, err := spur.ValidateHistoricalDate(date); err != nil {
+				return fmt.Errorf("invalid --date %q; want YYYYMMDD", date)
+			}
 			if date != "" && strings.HasSuffix(slug, "/realtime") {
 				return fmt.Errorf("--date is not supported for the realtime feed; realtime history is addressed by minute, which this command does not expose")
 			}
@@ -154,22 +156,15 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			}
 			client := cf.newClient(token)
 
-			dst, closeOut, err := of.writer(cmd)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = closeOut() }()
-
-			toStdout := of.output == "" || of.output == "-"
 			// MMDB is binary; dumping it to a terminal is never what the user
 			// wants and would corrupt the display.
-			if format == spur.FeedMMDB && toStdout && output.IsTerminal(dst) {
+			if format == spur.FeedMMDB && of.toStdout() && output.IsTerminal(cmd.OutOrStdout()) {
 				return fmt.Errorf("refusing to write a binary MMDB file to the terminal; use -o <file>")
 			}
 			// stdout gets readable JSON by default; a file gets the raw gzip
 			// unless the user asks to expand it. (Ignored for MMDB, which is
 			// never gzip.)
-			expand := toStdout || decompress
+			expand := of.toStdout() || decompress
 
 			// Progress is a diagnostic: stderr only, and only when a human is
 			// watching. It never touches the stdout data channel.
@@ -178,7 +173,7 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 				progressOut = cmd.ErrOrStderr()
 			}
 
-			return downloadFeed(cmd.Context(), client, slug, date, format, dst, expand, progressOut)
+			return downloadFeed(cmd.Context(), client, slug, date, format, of.sink(cmd), expand, progressOut)
 		},
 	}
 	cmd.Flags().StringVar(&date, "date", "", "download a historical release for this date (YYYYMMDD) instead of the latest")
@@ -232,10 +227,16 @@ func resolveDownloadSlug(arg string, ipv6, realtime bool) (string, error) {
 	return ft.Name, nil
 }
 
-// downloadFeed streams a feed file from the client to dst, optionally expanding
-// the gzip and reporting progress. Like fetchFeedMetadata it is split from the
-// cobra wiring so it can be exercised end-to-end against an httptest server, and
-// it collapses a forbidden status to the same feed-specific, actionable message.
+// downloadFeed streams a feed file from the client to the destination opened
+// by openSink, optionally expanding the gzip and reporting progress. Like
+// fetchFeedMetadata it is split from the cobra wiring so it can be exercised
+// end-to-end against an httptest server, and it collapses a forbidden status
+// to the same feed-specific, actionable message.
+//
+// The sink is opened only after the download request has succeeded, so a
+// failed request (bad token, missing date, rate limit) never creates or
+// truncates the -o file; a close failure surfaces as the command error since
+// it means the file is incomplete.
 //
 // For MMDB it first consults the feed's metadata: whether a feed publishes an
 // MMDB artifact is authoritative there (the MMDB container), so a feed that has
@@ -244,7 +245,7 @@ func resolveDownloadSlug(arg string, ipv6, realtime bool) (string, error) {
 // progressOut, when non-nil, receives a self-overwriting progress line; the
 // counter wraps the transfer stream so it tracks bytes downloaded against the
 // CDN's Content-Length.
-func downloadFeed(ctx context.Context, client *spur.Client, feedType, date string, format spur.FeedFormat, dst io.Writer, expand bool, progressOut io.Writer) error {
+func downloadFeed(ctx context.Context, client *spur.Client, feedType, date string, format spur.FeedFormat, openSink func() (io.Writer, func() error, error), expand bool, progressOut io.Writer) error {
 	if format == spur.FeedMMDB {
 		md, err := fetchFeedMetadata(ctx, client, feedType)
 		if err != nil {
@@ -257,14 +258,9 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 
 	body, size, err := client.DownloadFeed(ctx, feedType, date, format)
 	if err != nil {
-		var apiErr *spur.APIError
-		if errors.As(err, &apiErr) {
-			if errors.Is(apiErr, spur.ErrForbidden) {
-				return fmt.Errorf("access to the %q feed is denied: your token's subscription does not include it", feedType)
-			}
-			return errors.New(apiErr.Message())
-		}
-		return err
+		return collapseAPIError(err, map[error]string{
+			spur.ErrForbidden: fmt.Sprintf("access to the %q feed is denied: your token's subscription does not include it", feedType),
+		})
 	}
 	defer func() { _ = body.Close() }()
 
@@ -285,8 +281,16 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 		src = gz
 	}
 
+	dst, closeOut, err := openSink()
+	if err != nil {
+		return err
+	}
 	if _, err := io.Copy(dst, src); err != nil {
+		_ = closeOut()
 		return fmt.Errorf("stream feed: %w", err)
+	}
+	if err := closeOut(); err != nil {
+		return fmt.Errorf("close output: %w", err)
 	}
 	if prog != nil {
 		prog.Finish()
@@ -302,14 +306,9 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 func fetchFeedMetadata(ctx context.Context, client *spur.Client, feedType string) (spur.FeedMetadata, error) {
 	md, err := client.GetFeedMetadata(ctx, feedType)
 	if err != nil {
-		var apiErr *spur.APIError
-		if errors.As(err, &apiErr) {
-			if errors.Is(apiErr, spur.ErrForbidden) {
-				return spur.FeedMetadata{}, fmt.Errorf("access to the %q feed is denied: your token's subscription does not include it", feedType)
-			}
-			return spur.FeedMetadata{}, errors.New(apiErr.Message())
-		}
-		return spur.FeedMetadata{}, err
+		return spur.FeedMetadata{}, collapseAPIError(err, map[error]string{
+			spur.ErrForbidden: fmt.Sprintf("access to the %q feed is denied: your token's subscription does not include it", feedType),
+		})
 	}
 	return md, nil
 }

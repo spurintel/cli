@@ -83,16 +83,6 @@ func (d *Dict) Categories() []string {
 	return out
 }
 
-// Values returns all known enum values in the dictionary, sorted.
-func (d *Dict) Values() []string {
-	out := make([]string, 0, len(d.byKey))
-	for k := range d.byKey {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
 // walk recursively traverses a JSON Schema node, recording any const+description
 // entries it finds under oneOf/anyOf, and plain enum arrays. The path parameter
 // tracks the dotted property path (e.g., "properties.risks.items") so callers

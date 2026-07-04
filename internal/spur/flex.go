@@ -53,9 +53,14 @@ func (b FlexBool) MarshalJSON() ([]byte, error) {
 }
 
 // FlexNumber is a numeric value that accepts either a bare JSON number or a
-// quoted string during unmarshal and always emits a bare number on marshal.
-// It preserves the raw textual representation so integers do not gain a
-// trailing ".0" on round-trip and floats keep their precision.
+// quoted string during unmarshal and emits a bare number on marshal. It
+// preserves the raw textual representation so integers do not gain a trailing
+// ".0" on round-trip and floats keep their precision.
+//
+// The upstream docs type some numeric fields as strings, so the string form
+// tolerates non-numeric content (e.g. "N/A"); such a value round-trips as a
+// quoted string on marshal — never as a bare token, which would corrupt the
+// enclosing document. A bare value that is not a number is rejected.
 //
 // A zero value encodes as the bare number 0.
 type FlexNumber string
@@ -68,7 +73,7 @@ func (n *FlexNumber) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		// String form: unquote and keep the content.
+		// String form: unquote and keep the content, numeric or not.
 		var str string
 		if err := json.Unmarshal(data, &str); err != nil {
 			return err
@@ -76,17 +81,35 @@ func (n *FlexNumber) UnmarshalJSON(data []byte) error {
 		*n = FlexNumber(strings.TrimSpace(str))
 		return nil
 	}
-	// Bare number.
+	if !isJSONNumber(s) {
+		return fmt.Errorf("cannot unmarshal %s into FlexNumber", s)
+	}
 	*n = FlexNumber(s)
 	return nil
 }
 
-// MarshalJSON implements json.Marshaler.
+// MarshalJSON implements json.Marshaler. Numeric content is emitted as a bare
+// JSON number; anything else (tolerated from the string form) is quoted so the
+// value can never render the enclosing document invalid.
 func (n FlexNumber) MarshalJSON() ([]byte, error) {
 	if string(n) == "" {
 		return []byte("0"), nil
 	}
-	return []byte(string(n)), nil
+	if isJSONNumber(string(n)) {
+		return []byte(string(n)), nil
+	}
+	return json.Marshal(string(n))
+}
+
+// isJSONNumber reports whether s is a syntactically valid bare JSON number.
+func isJSONNumber(s string) bool {
+	if s == "" {
+		return false
+	}
+	if c := s[0]; c != '-' && (c < '0' || c > '9') {
+		return false
+	}
+	return json.Valid([]byte(s))
 }
 
 // String returns the textual representation of the number.

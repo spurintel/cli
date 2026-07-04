@@ -43,13 +43,19 @@ func (f *outputFlags) validate() error {
 }
 
 // emit resolves the destination, format, and color from the flags and renders
-// v through the output package.
-func (f *outputFlags) emit(cmd *cobra.Command, v any) error {
+// v through the output package. A close failure on a -o file (a deferred flush
+// hitting a full disk) surfaces as the command error rather than being
+// swallowed, since it means the written output is incomplete.
+func (f *outputFlags) emit(cmd *cobra.Command, v any) (err error) {
 	w, closeOut, err := f.writer(cmd)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closeOut() }()
+	defer func() {
+		if cerr := closeOut(); cerr != nil && err == nil {
+			err = fmt.Errorf("close output file %q: %w", f.output, cerr)
+		}
+	}()
 
 	format, err := f.resolveFormat(w)
 	if err != nil {
@@ -60,6 +66,23 @@ func (f *outputFlags) emit(cmd *cobra.Command, v any) error {
 	// user has not opted out of gets ANSI. A file or pipe never does.
 	color := output.IsTerminal(w) && !f.noColor
 	return output.Render(w, format, color, v)
+}
+
+// toStdout reports whether the resolved destination is stdout rather than a
+// file.
+func (f *outputFlags) toStdout() bool {
+	return f.output == "" || f.output == "-"
+}
+
+// sink returns a function that opens the destination on first use. The
+// streaming commands (feed download, export) take it instead of an opened
+// writer so a -o file is only created — and a pre-existing file only
+// truncated — after the API request has succeeded; opening up front would
+// destroy the file on an auth failure or rate limit.
+func (f *outputFlags) sink(cmd *cobra.Command) func() (io.Writer, func() error, error) {
+	return func() (io.Writer, func() error, error) {
+		return f.writer(cmd)
+	}
 }
 
 // writer returns the destination and a close function. "-" (or unset) writes to

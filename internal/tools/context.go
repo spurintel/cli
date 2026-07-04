@@ -80,8 +80,18 @@ func registerGetIPContext(s *mcp.Server, c *spur.Client) {
 
 		opts := spur.IPContextOptions{DT: dt}
 		results := make([]IPContextResult, 0, len(ips))
-		for _, ip := range ips {
-			results = append(results, lookupOne(ctx, c, ip, opts))
+		for i, ip := range ips {
+			res, err := lookupOne(ctx, c, ip, opts)
+			results = append(results, res)
+			// A dead token or exhausted quota dooms every remaining lookup;
+			// continuing would only burn round-trips (and, on 429, spend more
+			// rate-limited requests). Mark the rest skipped and stop.
+			if errors.Is(err, spur.ErrUnauthorized) || errors.Is(err, spur.ErrThrottled) {
+				for _, rest := range ips[i+1:] {
+					results = append(results, IPContextResult{IP: rest, Error: "skipped: " + res.Error})
+				}
+				break
+			}
 		}
 		return nil, GetIPContextOutput{Results: results}, nil
 	})
@@ -90,21 +100,23 @@ func registerGetIPContext(s *mcp.Server, c *spur.Client) {
 // lookupOne validates and looks up a single IP, returning its result with any
 // error captured per-IP (so a bad address or API failure never sinks the rest
 // of a batch). API errors are collapsed to the client's stable, sanitized
-// message, matching the `spur context` command.
-func lookupOne(ctx context.Context, c *spur.Client, ip string, opts spur.IPContextOptions) IPContextResult {
+// message, matching the `spur context` command. The raw API error is also
+// returned so the batch loop can classify batch-fatal failures (bad token,
+// exhausted quota); a validation failure is per-IP only and returns nil.
+func lookupOne(ctx context.Context, c *spur.Client, ip string, opts spur.IPContextOptions) (IPContextResult, error) {
 	valid, err := spur.ValidateIP(ip)
 	if err != nil {
-		return IPContextResult{IP: ip, Error: err.Error()}
+		return IPContextResult{IP: ip, Error: err.Error()}, nil
 	}
 	body, meta, err := c.GetIPContext(ctx, valid, opts)
 	if err != nil {
 		var apiErr *spur.APIError
 		if errors.As(err, &apiErr) {
-			return IPContextResult{IP: valid, Error: apiErr.Message()}
+			return IPContextResult{IP: valid, Error: apiErr.Message()}, err
 		}
-		return IPContextResult{IP: valid, Error: err.Error()}
+		return IPContextResult{IP: valid, Error: err.Error()}, err
 	}
-	return IPContextResult{IP: valid, Context: &body, Meta: &meta}
+	return IPContextResult{IP: valid, Context: &body, Meta: &meta}, nil
 }
 
 // statusHint returns a remediation hint for known Spur API errors, or "" if

@@ -3,6 +3,7 @@ package conf
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -304,5 +305,55 @@ func TestEmptyConfigFileIsValid(t *testing.T) {
 	}
 	if got.BaseURL != prodDefaults.BaseURL {
 		t.Errorf("BaseURL = %q, want default %q", got.BaseURL, prodDefaults.BaseURL)
+	}
+}
+
+// A config file holding a token with group/world access draws a warning; a
+// tight mode or a token-free config does not.
+func TestLoosePermissionsWarning(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not meaningful on Windows")
+	}
+
+	write := func(t *testing.T, body string, mode os.FileMode) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+		return path
+	}
+
+	loose := write(t, "token = \"tok\"\n", 0o644)
+	c, err := Load(loose)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if warn := LoosePermissionsWarning(loose, c); warn == "" {
+		t.Error("expected a warning for a world-readable token file")
+	}
+
+	tight := write(t, "token = \"tok\"\n", 0o600)
+	if warn := LoosePermissionsWarning(tight, c); warn != "" {
+		t.Errorf("unexpected warning for mode 0600: %q", warn)
+	}
+
+	noToken := write(t, "[endpoints]\napi = \"https://example.test\"\n", 0o644)
+	c2, err := Load(noToken)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if warn := LoosePermissionsWarning(noToken, c2); warn != "" {
+		t.Errorf("unexpected warning for a token-free config: %q", warn)
+	}
+
+	profileToken := write(t, "[profiles.stage]\ntoken = \"tok\"\n", 0o640)
+	c3, err := Load(profileToken)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if warn := LoosePermissionsWarning(profileToken, c3); warn == "" {
+		t.Error("expected a warning for a group-readable profile token")
 	}
 }

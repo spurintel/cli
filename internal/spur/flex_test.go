@@ -86,6 +86,7 @@ func TestFlexNumberUnmarshal(t *testing.T) {
 		{name: "quoted with whitespace", in: `" 7 "`, want: "7"},
 		{name: "null is empty", in: `null`, want: ""},
 		{name: "quoted empty is empty", in: `""`, want: ""},
+		{name: "quoted non-numeric is tolerated", in: `"N/A"`, want: "N/A"},
 	}
 
 	for _, tc := range cases {
@@ -103,6 +104,19 @@ func TestFlexNumberUnmarshal(t *testing.T) {
 	}
 }
 
+// A bare token that is not a number (true, {}, [1]) must be rejected at
+// decode time — accepting it would only defer the failure to marshal.
+func TestFlexNumberRejectsBareNonNumbers(t *testing.T) {
+	t.Parallel()
+
+	for _, in := range []string{`true`, `{}`, `[1]`, `nan`} {
+		var n FlexNumber
+		if err := json.Unmarshal([]byte(in), &n); err == nil {
+			t.Errorf("unmarshal %s: expected an error, got %q", in, n)
+		}
+	}
+}
+
 func TestFlexNumberMarshal(t *testing.T) {
 	t.Parallel()
 
@@ -114,6 +128,11 @@ func TestFlexNumberMarshal(t *testing.T) {
 		{name: "integer stays integer", in: FlexNumber("42"), want: "42"},
 		{name: "float keeps precision", in: FlexNumber("3.14159"), want: "3.14159"},
 		{name: "empty encodes as zero", in: FlexNumber(""), want: "0"},
+		{name: "negative stays bare", in: FlexNumber("-1.5"), want: "-1.5"},
+		{name: "exponent stays bare", in: FlexNumber("1e5"), want: "1e5"},
+		// A tolerated non-numeric string must round-trip as a quoted string,
+		// never as a bare token that would corrupt the enclosing document.
+		{name: "non-numeric is quoted", in: FlexNumber("N/A"), want: `"N/A"`},
 	}
 
 	for _, tc := range cases {

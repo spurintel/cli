@@ -129,11 +129,10 @@ func validateAssessment(in FormatAssessmentInput) error {
 	// TUNNEL is a normal English word ("no tunnels observed"); we only reject
 	// when the LLM cites the enum in its formal uppercase form.
 	for _, enum := range riskEnums {
-		re := regexp.MustCompile(`\b` + regexp.QuoteMeta(enum) + `\b`)
-		if re.MatchString(combined) && !present[enum] {
+		if riskEnumRes[enum].MatchString(combined) && !present[enum] {
 			return fmt.Errorf(
 				"bottom_line/assessment cites risk enum %q, but it is not in context.risks[]=%v. "+
-					"Only cite risks Spur actually returned, or rephrase to remove the reference.",
+					"Only cite risks Spur actually returned, or rephrase to remove the reference",
 				enum, in.Context.Risks,
 			)
 		}
@@ -148,25 +147,37 @@ func validateAssessment(in FormatAssessmentInput) error {
 		if strings.Contains(combinedLower, phrase) && !present[enum] {
 			return fmt.Errorf(
 				"bottom_line/assessment uses the phrase %q, which maps to risk enum %q, but that enum is not in context.risks[]=%v. "+
-					"Either rephrase without the term, or drop the claim.",
+					"Either rephrase without the term, or drop the claim",
 				phrase, enum, in.Context.Risks,
 			)
 		}
 	}
 
 	// Density-as-percentage check.
-	if in.Context.Client.Concentration != nil {
-		pctRe := regexp.MustCompile(`density\s*[^\d]*\d+(\.\d+)?\s*%`)
-		if pctRe.MatchString(combined) {
-			return fmt.Errorf(
-				"density is a 0-1 decimal (%.3f in this response); do not convert to a percentage. Rewrite as 'density %.3f'.",
-				in.Context.Client.Concentration.Density, in.Context.Client.Concentration.Density,
-			)
-		}
+	if in.Context.Client.Concentration != nil && densityPctRe.MatchString(combined) {
+		return fmt.Errorf(
+			"density is a 0-1 decimal (%.3f in this response); do not convert to a percentage. Rewrite as 'density %.3f'",
+			in.Context.Client.Concentration.Density, in.Context.Client.Concentration.Density,
+		)
 	}
 
 	return nil
 }
+
+// riskEnumRes precompiles the word-boundary matcher for each risk enum:
+// validateAssessment runs on every format_assessment call and must not
+// recompile a regex per enum per call.
+var riskEnumRes = func() map[string]*regexp.Regexp {
+	m := make(map[string]*regexp.Regexp, len(riskEnums))
+	for _, e := range riskEnums {
+		m[e] = regexp.MustCompile(`\b` + regexp.QuoteMeta(e) + `\b`)
+	}
+	return m
+}()
+
+// densityPctRe matches density being quoted as a percentage, which the fidelity
+// rules forbid (density is a 0-1 decimal).
+var densityPctRe = regexp.MustCompile(`density\s*[^\d]*\d+(\.\d+)?\s*%`)
 
 // renderAssessment produces the final markdown. All facts are drawn from the
 // structured input; only bottom_line and assessment come from LLM prose. The

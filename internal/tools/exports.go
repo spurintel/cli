@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -143,11 +145,6 @@ func registerExport(s *mcp.Server, c *spur.Client) {
 			return toolError(fmt.Errorf("read export stream: %w", err), ""), ExportOutput{}, nil
 		}
 
-		command := "spur export " + feed.Name
-		if in.IPv6 {
-			command += " --ipv6"
-		}
-
 		return nil, ExportOutput{
 			Feed:      feed.Name,
 			Slug:      slug,
@@ -155,7 +152,63 @@ func registerExport(s *mcp.Server, c *spur.Client) {
 			Rows:      rows,
 			RowCount:  len(rows),
 			Truncated: truncated,
-			Command:   command,
+			Command:   exportCommand(slug, format, in),
 		}, nil
 	})
+}
+
+// exportCommand reconstructs the `spur export` invocation that streams the
+// full result this tool call sampled: the resolved slug (which already carries
+// any -ipv6 suffix, so no --ipv6 flag is needed) plus every filter that shaped
+// the sample. The sampling limit is deliberately omitted — the command exists
+// to fetch the unbounded stream. Values are shell-quoted so a model-supplied
+// filter can never smuggle shell syntax into a command a user may paste.
+func exportCommand(slug, format string, in ExportInput) string {
+	args := []string{"spur", "export", shellQuote(slug)}
+	if format != "" && format != "csv" {
+		args = append(args, "--format", shellQuote(format))
+	}
+	if len(in.Fields) > 0 {
+		args = append(args, "--fields", shellQuote(strings.Join(in.Fields, ",")))
+	}
+	if len(in.Tags) > 0 {
+		args = append(args, "--tags", shellQuote(strings.Join(in.Tags, ",")))
+	}
+	if len(in.Ccs) > 0 {
+		args = append(args, "--ccs", shellQuote(strings.Join(in.Ccs, ",")))
+	}
+	if len(in.Asns) > 0 {
+		strs := make([]string, len(in.Asns))
+		for i, a := range in.Asns {
+			strs[i] = strconv.Itoa(a)
+		}
+		args = append(args, "--asns", strings.Join(strs, ","))
+	}
+	if len(in.CallbackProxies) > 0 {
+		args = append(args, "--callback-proxies", shellQuote(strings.Join(in.CallbackProxies, ",")))
+	}
+	if in.Attributed != nil {
+		args = append(args, "--attributed="+strconv.FormatBool(*in.Attributed))
+	}
+	if in.DiffDate != "" {
+		args = append(args, "--diff-date", shellQuote(in.DiffDate))
+	} else if in.Diff {
+		args = append(args, "--diff")
+	}
+	if in.CSVHeader {
+		args = append(args, "--csv-header")
+	}
+	return strings.Join(args, " ")
+}
+
+// shellSafe matches strings that need no quoting as a shell word.
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
+
+// shellQuote returns s unchanged when it is safe as a bare shell word and
+// single-quoted (with embedded single quotes escaped) otherwise.
+func shellQuote(s string) string {
+	if shellSafe.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

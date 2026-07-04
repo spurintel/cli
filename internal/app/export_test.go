@@ -38,7 +38,7 @@ func TestStreamExportWritesCSV(t *testing.T) {
 
 	q := url.Values{"output": {"csv"}, "limit": {"5"}}
 	var dst bytes.Buffer
-	if err := streamExport(context.Background(), client, "anonymous", "anonymous", q, &dst); err != nil {
+	if err := streamExport(context.Background(), client, "anonymous", "anonymous", q, bufSink(&dst)); err != nil {
 		t.Fatalf("streamExport: %v", err)
 	}
 	if dst.String() != csv {
@@ -67,7 +67,7 @@ func TestStreamExportWritesMMDBBytes(t *testing.T) {
 
 	q := url.Values{"output": {"mmdb"}}
 	var dst bytes.Buffer
-	if err := streamExport(context.Background(), client, "ipgeo", "ipgeo", q, &dst); err != nil {
+	if err := streamExport(context.Background(), client, "ipgeo", "ipgeo", q, bufSink(&dst)); err != nil {
 		t.Fatalf("streamExport: %v", err)
 	}
 	if dst.String() != mmdb {
@@ -90,7 +90,7 @@ func TestStreamExportRateLimitIsClear(t *testing.T) {
 	client.ExportsBase = srv.URL
 
 	var dst bytes.Buffer
-	err := streamExport(context.Background(), client, "anonymous", "anonymous", nil, &dst)
+	err := streamExport(context.Background(), client, "anonymous", "anonymous", nil, bufSink(&dst))
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -122,7 +122,7 @@ func TestStreamExportForbiddenIsClear(t *testing.T) {
 	client.ExportsBase = srv.URL
 
 	var dst bytes.Buffer
-	err := streamExport(context.Background(), client, "ztna", "ztna", nil, &dst)
+	err := streamExport(context.Background(), client, "ztna", "ztna", nil, bufSink(&dst))
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -211,4 +211,32 @@ func writeExportConfig(t *testing.T, exportsURL string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+// A failed export must not destroy a pre-existing -o file: the destination is
+// only opened (and truncated) after the request has succeeded.
+func TestExportCmdFailureLeavesExistingFileIntact(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "denied", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	existing := filepath.Join(t.TempDir(), "data.csv")
+	const precious = "yesterday's rows that must survive\n"
+	if err := os.WriteFile(existing, []byte(precious), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	_, _, err := runExportCmd(t, srv.URL, "export", "anonymous", "-o", existing)
+	if err == nil {
+		t.Fatal("expected the 403 to surface as an error")
+	}
+
+	got, readErr := os.ReadFile(existing)
+	if readErr != nil {
+		t.Fatalf("read seeded file: %v", readErr)
+	}
+	if string(got) != precious {
+		t.Fatalf("pre-existing -o file was clobbered: %q", got)
+	}
 }

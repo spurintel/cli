@@ -1,6 +1,7 @@
 package spur
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -79,5 +80,61 @@ func TestGetStatusReturnsSanitizedAPIError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "internal detail") {
 		t.Fatalf("error leaked upstream body: %q", err.Error())
+	}
+}
+
+// The JSON client must never re-send the Token header across a cross-host
+// redirect: Go's default policy only strips Authorization/Cookie, so a
+// redirect from the API host would otherwise hand the credential to whatever
+// host the Location points at.
+func TestDoJSONStripsTokenOnRedirect(t *testing.T) {
+	t.Parallel()
+
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Token"); got != "" {
+			t.Errorf("Token forwarded across hosts = %q, want empty", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer other.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Token"); got != "secret" {
+			t.Errorf("Token on initial request = %q, want secret", got)
+		}
+		http.Redirect(w, r, other.URL+"/status", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	client := NewClient("secret")
+	client.Base = origin.URL
+
+	if _, err := client.GetStatus(context.Background()); err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+}
+
+// An oversized upstream error page must not mask the status-mapped APIError:
+// the status is classified before the body is read.
+func TestDoJSONOversizeErrorBodyStillMapsStatus(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		big := bytes.Repeat([]byte("x"), int(maxResponseBodyBytes)+512)
+		_, _ = w.Write(big)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.Base = srv.URL
+
+	_, err := client.GetStatus(context.Background())
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !errors.Is(err, ErrServer) {
+		t.Fatalf("error = %v, want ErrServer despite the oversized body", err)
 	}
 }
