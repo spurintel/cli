@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/spurintel/cli/internal/output"
 )
 
 // Run builds the spur CLI and executes it against ctx. cmd/spur/main.go calls
@@ -54,14 +56,21 @@ func newRootCmd() *cobra.Command {
 		if !needsConfig(c) {
 			return nil
 		}
-		return cf.resolve()
+		if err := cf.resolve(); err != nil {
+			return err
+		}
+		if cf.warning != "" {
+			w := c.ErrOrStderr()
+			output.Warnf(w, of.colorEnabled(w), "%s", cf.warning)
+		}
+		return nil
 	}
 	cmd.AddCommand(newContextCmd(of, cf))
 	cmd.AddCommand(newStatusCmd(of, cf))
 	cmd.AddCommand(newTagCmd(of, cf))
 	cmd.AddCommand(newFeedCmd(of, cf))
 	cmd.AddCommand(newExportCmd(of, cf))
-	cmd.AddCommand(newAuthCmd())
+	cmd.AddCommand(newAuthCmd(of))
 	cmd.AddCommand(newMCPCmd(cf))
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newCompletionCmd())

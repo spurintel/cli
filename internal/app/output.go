@@ -27,7 +27,7 @@ func (f *outputFlags) register(cmd *cobra.Command) {
 	pf.StringVarP(&f.output, "output", "o", "-",
 		"write output to a file instead of stdout ('-' for stdout)")
 	pf.BoolVar(&f.noColor, "no-color", false,
-		"disable ANSI color even at a terminal")
+		"disable ANSI color even at a terminal (the NO_COLOR environment variable is also honored)")
 }
 
 // validate checks flag values that can be rejected without knowing the
@@ -62,10 +62,15 @@ func (f *outputFlags) emit(cmd *cobra.Command, v any) (err error) {
 		return err
 	}
 
-	// Color is a property of the resolved destination: only a terminal that the
-	// user has not opted out of gets ANSI. A file or pipe never does.
-	color := output.IsTerminal(w) && !f.noColor
-	return output.Render(w, format, color, v)
+	return output.Render(w, format, f.colorEnabled(w), v)
+}
+
+// colorEnabled reports whether the destination w should receive ANSI color:
+// a color-capable terminal (or a CLICOLOR_FORCE-d environment) that the user
+// has not opted out of via --no-color or NO_COLOR. A file or pipe never gets
+// color unless forced.
+func (f *outputFlags) colorEnabled(w io.Writer) bool {
+	return !f.noColor && output.ColorEnabled(w)
 }
 
 // toStdout reports whether the resolved destination is stdout rather than a
