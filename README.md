@@ -303,15 +303,6 @@ It also serves the Spur JSON schemas and API docs as resources, and an `assess_i
 
 Your pipelines keep working: piped output is still JSON (one object per IP), and `SPUR_TOKEN` is still honored. What's new on top: styled terminal output, `status`/`tag`/`feed`/`export`, secure token storage with `spur auth`, config profiles, shell completion, and the MCP server.
 
-## Development
-
-```bash
-make build   # bin/spur
-make test    # go test ./...
-```
-
-The layout follows the [golang-standards/project-layout](https://github.com/golang-standards/project-layout): a thin `cmd/spur/main.go` hands off to `internal/app`, which builds the Cobra command tree over the shared `internal/spur` API client. Architectural decisions live in [`docs/adr/`](docs/adr/).
-
 ## License
 
 See [LICENSE](LICENSE).
