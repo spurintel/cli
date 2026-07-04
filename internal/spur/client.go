@@ -33,15 +33,20 @@ type Client struct {
 	// FeedsBase is the root of the Data Feeds API (feeds.spur.us). It is a
 	// distinct host from Base, overridable independently via config.
 	FeedsBase string
+	// ExportsBase is the root of the Exports API (exports.spur.us). It is a
+	// distinct host from Base and FeedsBase, overridable independently via
+	// config, and serves the dynamically filtered feed subsets.
+	ExportsBase string
 }
 
 // NewClient constructs a Client with a sensible default timeout.
 func NewClient(token string) *Client {
 	return &Client{
-		Token:     token,
-		HTTP:      &http.Client{Timeout: 15 * time.Second},
-		Base:      BaseURL,
-		FeedsBase: FeedsBaseURL,
+		Token:       token,
+		HTTP:        &http.Client{Timeout: 15 * time.Second},
+		Base:        BaseURL,
+		FeedsBase:   FeedsBaseURL,
+		ExportsBase: ExportsBaseURL,
 	}
 }
 
