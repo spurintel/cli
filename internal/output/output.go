@@ -110,6 +110,14 @@ func renderJSON(w io.Writer, v any) error {
 		}
 		return nil
 	}
+	if feeds, ok := v.([]spur.FeedType); ok {
+		for i := range feeds {
+			if err := enc.Encode(feeds[i]); err != nil {
+				return fmt.Errorf("encode json: %w", err)
+			}
+		}
+		return nil
+	}
 	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf("encode json: %w", err)
 	}

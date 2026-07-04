@@ -25,6 +25,12 @@ func renderCSV(w io.Writer, v any) error {
 		return writeTagMetadataCSV(cw, c)
 	case *spur.TagMetadata:
 		return writeTagMetadataCSV(cw, *c)
+	case spur.FeedMetadata:
+		return writeFeedMetadataCSV(cw, c)
+	case *spur.FeedMetadata:
+		return writeFeedMetadataCSV(cw, *c)
+	case []spur.FeedType:
+		return writeFeedTypesCSV(cw, c)
 	case spur.IPContext:
 		return writeIPContextCSV(cw, c)
 	case *spur.IPContext:
@@ -113,6 +119,69 @@ func flexBoolCSV(b *spur.FlexBool) string {
 		return ""
 	}
 	return strconv.FormatBool(bool(*b))
+}
+
+// feedTypeCSVHeader maps the feed catalog to two columns so `spur feed list
+// --format csv` is a flat name/description table.
+var feedTypeCSVHeader = []string{"feed", "description"}
+
+func writeFeedTypesCSV(cw *csv.Writer, types []spur.FeedType) error {
+	if err := cw.Write(feedTypeCSVHeader); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+	for _, ft := range types {
+		if err := cw.Write([]string{ft.Name, ft.Description}); err != nil {
+			return fmt.Errorf("write csv record: %w", err)
+		}
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// feedMetadataCSVHeader flattens both artifact containers into one row: the
+// requested feed type, then the JSON and MMDB file fields. MMDB columns are
+// empty when the feed is not offered in that format, and filesize is empty when
+// absent (the realtime feed) so a scripted reader can tell "unknown" from zero.
+var feedMetadataCSVHeader = []string{
+	"feedType",
+	"json.date",
+	"json.location",
+	"json.generatedAt",
+	"json.availableAt",
+	"json.filesize",
+	"mmdb.date",
+	"mmdb.location",
+	"mmdb.generatedAt",
+	"mmdb.availableAt",
+	"mmdb.filesize",
+}
+
+func writeFeedMetadataCSV(cw *csv.Writer, md spur.FeedMetadata) error {
+	if err := cw.Write(feedMetadataCSVHeader); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+	record := append([]string{md.Type}, feedFileCSVFields(md.JSON)...)
+	if md.MMDB != nil {
+		record = append(record, feedFileCSVFields(*md.MMDB)...)
+	} else {
+		record = append(record, feedFileCSVFields(spur.FeedFile{})...)
+	}
+	if err := cw.Write(record); err != nil {
+		return fmt.Errorf("write csv record: %w", err)
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// feedFileCSVFields renders one FeedFile as its five columns. A zero filesize
+// (absent on the realtime feed, and on an empty MMDB container) emits an empty
+// cell rather than "0".
+func feedFileCSVFields(f spur.FeedFile) []string {
+	filesize := ""
+	if f.Filesize > 0 {
+		filesize = strconv.FormatInt(f.Filesize, 10)
+	}
+	return []string{f.Date, f.Location, f.GeneratedAt, f.AvailableAt, filesize}
 }
 
 // ipContextCSVHeader is the column order shared by the single-value and batch

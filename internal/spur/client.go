@@ -28,15 +28,20 @@ func userAgent() string {
 type Client struct {
 	Token string
 	HTTP  *http.Client
-	Base  string
+	// Base is the root of the Context API (api.spur.us).
+	Base string
+	// FeedsBase is the root of the Data Feeds API (feeds.spur.us). It is a
+	// distinct host from Base, overridable independently via config.
+	FeedsBase string
 }
 
 // NewClient constructs a Client with a sensible default timeout.
 func NewClient(token string) *Client {
 	return &Client{
-		Token: token,
-		HTTP:  &http.Client{Timeout: 15 * time.Second},
-		Base:  BaseURL,
+		Token:     token,
+		HTTP:      &http.Client{Timeout: 15 * time.Second},
+		Base:      BaseURL,
+		FeedsBase: FeedsBaseURL,
 	}
 }
 

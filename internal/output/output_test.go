@@ -416,6 +416,192 @@ func TestRenderTagTextNoMetrics(t *testing.T) {
 	}
 }
 
+// sampleFeedMetadata is a representative daily feed document with both the JSON
+// and MMDB containers populated so every renderer path has something to show.
+func sampleFeedMetadata() spur.FeedMetadata {
+	return spur.FeedMetadata{
+		Type: "anonymous",
+		JSON: spur.FeedFile{
+			Date:        "20250324",
+			Location:    "20250324/feed.json.gz",
+			GeneratedAt: "2025-03-24T00:59:41Z",
+			AvailableAt: "2025-03-24T00:59:56Z",
+			Filesize:    89553131,
+		},
+		MMDB: &spur.FeedFile{
+			Date:     "20250324",
+			Location: "20250324/feed.mmdb",
+			Filesize: 42,
+		},
+	}
+}
+
+func TestRenderFeedMetadataJSON(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatJSON, false, sampleFeedMetadata()); err != nil {
+		t.Fatalf("Render json: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, esc) {
+		t.Errorf("feed json contains ANSI escape codes: %q", out)
+	}
+	// A single document is one NDJSON line.
+	if lines := strings.Count(strings.TrimRight(out, "\n"), "\n"); lines != 0 {
+		t.Errorf("feed json should be a single line, got %d newlines: %q", lines, out)
+	}
+	var got spur.FeedMetadata
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("feed json is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Type != "anonymous" || got.JSON.Filesize != 89553131 {
+		t.Errorf("decoded feed metadata = %+v", got)
+	}
+	// Filesize round-trips as a bare number, not a quoted string.
+	if !strings.Contains(out, `"filesize":89553131`) {
+		t.Errorf("filesize not emitted as bare number: %s", out)
+	}
+}
+
+func TestRenderFeedMetadataCSV(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatCSV, false, sampleFeedMetadata()); err != nil {
+		t.Fatalf("Render csv: %v", err)
+	}
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("feed csv does not parse: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("feed csv records = %d, want 2 (header + row)", len(records))
+	}
+	header, row := records[0], records[1]
+	if len(header) != len(row) {
+		t.Errorf("feed csv header has %d columns but row has %d", len(header), len(row))
+	}
+	if !slices.Contains(header, "json.filesize") {
+		t.Errorf("feed csv header missing json.filesize: %v", header)
+	}
+	if !slices.Contains(row, "89553131") {
+		t.Errorf("feed csv row missing filesize: %v", row)
+	}
+	if !slices.Contains(row, "anonymous") {
+		t.Errorf("feed csv row missing feed type: %v", row)
+	}
+}
+
+// A realtime document has no MMDB container and no filesize; the MMDB columns
+// and filesize cell must be empty rather than "0" so a reader can tell absent
+// from zero.
+func TestRenderFeedMetadataCSVRealtime(t *testing.T) {
+	t.Parallel()
+	md := spur.FeedMetadata{
+		Type: "anonymous-residential/realtime",
+		JSON: spur.FeedFile{Date: "2025-03-25T13:00:04Z", Location: "realtime/20250325/1300.json.gz"},
+	}
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatCSV, false, md); err != nil {
+		t.Fatalf("Render csv: %v", err)
+	}
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("feed csv does not parse: %v", err)
+	}
+	row := records[1]
+	// Locate the json.filesize column and assert it is empty.
+	idx := slices.Index(records[0], "json.filesize")
+	if idx < 0 {
+		t.Fatalf("no json.filesize column: %v", records[0])
+	}
+	if row[idx] != "" {
+		t.Errorf("realtime json.filesize = %q, want empty", row[idx])
+	}
+}
+
+func TestRenderFeedMetadataTextNoColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, false, sampleFeedMetadata()); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, esc) {
+		t.Errorf("--no-color feed text contains ANSI escape codes: %q", out)
+	}
+	for _, want := range []string{"Feed", "anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("feed text missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderFeedMetadataTextColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, true, sampleFeedMetadata()); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	if !strings.Contains(buf.String(), esc) {
+		t.Errorf("colored feed text has no ANSI escape codes: %q", buf.String())
+	}
+}
+
+func TestRenderFeedTypesJSON(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatJSON, false, spur.FeedTypes); err != nil {
+		t.Fatalf("Render json: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != len(spur.FeedTypes) {
+		t.Fatalf("feed catalog json = %d lines, want %d (NDJSON, one per feed)", len(lines), len(spur.FeedTypes))
+	}
+	var first spur.FeedType
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("catalog line is not a bare JSON object: %v\n%s", err, lines[0])
+	}
+	if first.Name == "" || first.Description == "" {
+		t.Errorf("decoded feed type = %+v, want populated", first)
+	}
+}
+
+func TestRenderFeedTypesCSV(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatCSV, false, spur.FeedTypes); err != nil {
+		t.Fatalf("Render csv: %v", err)
+	}
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("catalog csv does not parse: %v", err)
+	}
+	if len(records) != len(spur.FeedTypes)+1 {
+		t.Fatalf("catalog csv records = %d, want %d (header + one per feed)", len(records), len(spur.FeedTypes)+1)
+	}
+	if !slices.Equal(records[0], []string{"feed", "description"}) {
+		t.Errorf("catalog csv header = %v", records[0])
+	}
+}
+
+func TestRenderFeedTypesTextNoColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, false, spur.FeedTypes); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, esc) {
+		t.Errorf("--no-color catalog text contains ANSI escape codes: %q", out)
+	}
+	// The IPv6 and realtime variants must be listed, per the ticket.
+	for _, want := range []string{"anonymous", "anonymous-residential-ipv6", "anonymous-residential/realtime", "ipsummary"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("catalog text missing feed %q\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderUnknownFormat(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer

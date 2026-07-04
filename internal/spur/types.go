@@ -126,6 +126,32 @@ type Status struct {
 	ServiceTier      string `json:"serviceTier" jsonschema:"Service tier, e.g., online."`
 }
 
+// FeedMetadata is the document returned by GET /v2/{feed}/latest on the feeds
+// host. It points at the current feed artifact(s) and carries their generation
+// metadata. The JSON container is always present; MMDB is present only for feed
+// types also offered in MaxMind DB format.
+//
+// Type is not part of the upstream document — the client sets it to the feed
+// type that was requested so the value is self-describing in JSON/CSV output
+// and in the styled report.
+type FeedMetadata struct {
+	Type string    `json:"feedType,omitempty" jsonschema:"The feed type this metadata describes, e.g. anonymous."`
+	JSON FeedFile  `json:"json" jsonschema:"Metadata for the newline-delimited JSON (gzip) feed file."`
+	MMDB *FeedFile `json:"mmdb,omitempty" jsonschema:"Metadata for the MaxMind DB feed file, present only for feeds offered in that format."`
+}
+
+// FeedFile describes one downloadable feed artifact: where it lives relative to
+// the feed root and when it was produced. GeneratedAt, AvailableAt, and Filesize
+// are absent on the realtime feed, which carries only Date and Location, so they
+// are optional.
+type FeedFile struct {
+	Date        string `json:"date" jsonschema:"The feed's date. YYYYMMDD for daily feeds; an ISO8601 timestamp for the realtime feed."`
+	Location    string `json:"location" jsonschema:"Path to the feed file relative to the feed root, e.g. 20250324/feed.json.gz."`
+	GeneratedAt string `json:"generated_at,omitempty" jsonschema:"When the feed was generated, in ISO8601 format."`
+	AvailableAt string `json:"available_at,omitempty" jsonschema:"When the feed was made available, in ISO8601 format."`
+	Filesize    int64  `json:"filesize,omitempty" jsonschema:"Size of the feed file in bytes."`
+}
+
 // Meta carries the response headers that accompany a Context API call. It is
 // returned alongside the body so MCP tools can surface quota and result-date
 // information.

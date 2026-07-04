@@ -9,7 +9,7 @@ import (
 
 // prodDefaults is a stand-in for the built-in production settings the app layer
 // passes in (kept local so conf has no dependency on the client package).
-var prodDefaults = Resolved{BaseURL: "https://api.spur.us"}
+var prodDefaults = Resolved{BaseURL: "https://api.spur.us", FeedsBaseURL: "https://feeds.spur.us"}
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
@@ -72,6 +72,43 @@ api = "https://api.staging.spur.us"
 	}
 	if want := "https://api.staging.spur.us"; got.BaseURL != want {
 		t.Errorf("BaseURL = %q, want %q", got.BaseURL, want)
+	}
+}
+
+func TestFeedsEndpointOverride(t *testing.T) {
+	// The feeds host overrides independently of the Context API host: overriding
+	// one must leave the other at its default.
+	path := writeConfig(t, `
+[endpoints]
+feeds = "https://feeds.staging.spur.us"
+
+[profiles.local.endpoints]
+feeds = "http://localhost:9090"
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cases := []struct {
+		profile   string
+		wantFeeds string
+	}{
+		{"", "https://feeds.staging.spur.us"},
+		{"local", "http://localhost:9090"},
+	}
+	for _, tc := range cases {
+		got, err := cfg.Resolve(tc.profile, prodDefaults)
+		if err != nil {
+			t.Fatalf("Resolve(%q): %v", tc.profile, err)
+		}
+		if got.FeedsBaseURL != tc.wantFeeds {
+			t.Errorf("Resolve(%q).FeedsBaseURL = %q, want %q", tc.profile, got.FeedsBaseURL, tc.wantFeeds)
+		}
+		// Overriding feeds must not disturb the Context API base.
+		if got.BaseURL != prodDefaults.BaseURL {
+			t.Errorf("Resolve(%q).BaseURL = %q, want default %q", tc.profile, got.BaseURL, prodDefaults.BaseURL)
+		}
 	}
 }
 
