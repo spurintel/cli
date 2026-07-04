@@ -2,7 +2,10 @@ package spur
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -42,6 +45,19 @@ var FeedTypes = []FeedType{
 	{Name: "ipsummary", Description: "Per-IP summary of Spur attributes"},
 }
 
+// FeedFormat selects which artifact of a feed to download. Feeds are always
+// published as newline-delimited-JSON gzip; some (e.g. ipgeo, anonymous) are
+// additionally published as a MaxMind DB. Whether a given feed offers MMDB is
+// authoritative in its metadata document (FeedMetadata.MMDB), not a static list.
+type FeedFormat int
+
+const (
+	// FeedJSONGzip is the newline-delimited-JSON gzip artifact (.json.gz).
+	FeedJSONGzip FeedFormat = iota
+	// FeedMMDB is the MaxMind DB artifact (.mmdb). Not gzipped.
+	FeedMMDB
+)
+
 // LookupFeedType returns the catalog entry with the given name and whether it
 // exists. Feed names are matched exactly; they are lowercase by convention.
 func LookupFeedType(name string) (FeedType, bool) {
@@ -78,4 +94,98 @@ func (c *Client) GetFeedMetadata(ctx context.Context, feedType string) (FeedMeta
 	}
 	out.Type = feedType
 	return out, nil
+}
+
+// DownloadFeed streams a feed's data file from the feeds host in the requested
+// format. When date is empty it fetches the current release (`.../latest.json.gz`
+// or `.../latest.mmdb`); otherwise it fetches the historical file for that
+// YYYYMMDD (`.../<date>/feed.json.gz` or `.../<date>/feed.mmdb`).
+//
+// feedType may contain a nested segment (anonymous-residential/realtime); each
+// segment is path-escaped independently so the slash is preserved. The initial
+// request carries the Token header; the feeds host answers with a redirect to
+// the CDN (storage.googleapis.com), which is followed automatically — but the
+// Token is stripped before leaving the feeds host so it is never handed to the
+// third-party CDN (Go's default policy strips Authorization/Cookie but not a
+// custom header). The returned body is the raw artifact stream (gzip for JSON,
+// an uncompressed MaxMind DB for MMDB); the caller owns it and must Close it.
+// size is the CDN's Content-Length, or -1 when unknown.
+//
+// Unlike the JSON methods this does not buffer or size-limit the body: feeds are
+// hundreds of megabytes and must stream. A slow or stuck transfer is bounded by
+// ctx, not a client timeout. DownloadFeed does not check that feedType offers
+// the requested format — callers that need a clear "not offered" error should
+// consult GetFeedMetadata (its MMDB container) first.
+func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format FeedFormat) (io.ReadCloser, int64, error) {
+	feedType = strings.Trim(strings.TrimSpace(feedType), "/")
+	if feedType == "" {
+		return nil, 0, fmt.Errorf("feed type is required")
+	}
+
+	latestName, dailyName := "latest.json.gz", "feed.json.gz"
+	if format == FeedMMDB {
+		latestName, dailyName = "latest.mmdb", "feed.mmdb"
+	}
+
+	segments := strings.Split(feedType, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	endpoint := c.FeedsBase + "/v2/" + strings.Join(segments, "/")
+	if date == "" {
+		endpoint += "/" + latestName
+	} else {
+		endpoint += "/" + url.PathEscape(date) + "/" + dailyName
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Token", c.Token)
+	req.Header.Set("User-Agent", userAgent())
+
+	resp, err := c.downloadHTTPClient().Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Drain and close so the connection can be reused; the body is an
+		// upstream error page we deliberately do not surface.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
+		_ = resp.Body.Close()
+		return nil, 0, newAPIError(resp.StatusCode)
+	}
+
+	return resp.Body, resp.ContentLength, nil
+}
+
+// downloadHTTPClient returns an HTTP client tuned for large streaming downloads:
+// no overall timeout (transfers are bounded by the request context, not a
+// deadline that would kill a legitimately long download) and a redirect policy
+// that drops the Token header once the target host changes. It reuses the base
+// client's Transport so any configured proxy/TLS settings still apply.
+func (c *Client) downloadHTTPClient() *http.Client {
+	var transport http.RoundTripper
+	if c.HTTP != nil {
+		transport = c.HTTP.Transport
+	}
+	return &http.Client{
+		Transport:     transport,
+		CheckRedirect: stripTokenOnHostChange,
+	}
+}
+
+// stripTokenOnHostChange follows redirects but removes the Token header on any
+// hop that leaves the original host, so a pre-signed CDN URL never receives the
+// Spur credential. It also enforces Go's default 10-redirect ceiling.
+func stripTokenOnHostChange(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+		req.Header.Del("Token")
+	}
+	return nil
 }

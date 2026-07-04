@@ -1,8 +1,11 @@
 package spur
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,6 +151,161 @@ func TestGetFeedMetadataRequiresType(t *testing.T) {
 	if _, err := client.GetFeedMetadata(context.Background(), "  "); err == nil {
 		t.Fatal("empty feed type = nil error, want error")
 	}
+}
+
+// gzipBytes is a small gzip payload used to stand in for a feed file.
+func gzipBytes(t *testing.T, plain string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write([]byte(plain)); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// DownloadFeed hits the latest .json.gz path with the Token header and streams
+// the (compressed) body back verbatim, along with the CDN Content-Length.
+func TestDownloadFeedStreamsBody(t *testing.T) {
+	t.Parallel()
+
+	payload := gzipBytes(t, `{"ip":"1.2.3.4"}`+"\n")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.URL.Path, "/v2/anonymous/latest.json.gz"; got != want {
+			t.Errorf("path = %q, want %q", got, want)
+		}
+		if got := r.Header.Get("Token"); got != "secret" {
+			t.Errorf("Token header = %q, want secret", got)
+		}
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	body, size, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("DownloadFeed: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+
+	got, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Errorf("streamed body did not match the served bytes")
+	}
+	if size != int64(len(payload)) {
+		t.Errorf("size = %d, want %d", size, len(payload))
+	}
+}
+
+// The date and format together select the artifact path: latest vs historical,
+// json.gz vs mmdb; a nested slug keeps its slash.
+func TestDownloadFeedPathSelection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		feedType string
+		date     string
+		format   FeedFormat
+		wantPath string
+	}{
+		{"json historical", "anonymous", "20250323", FeedJSONGzip, "/v2/anonymous/20250323/feed.json.gz"},
+		{"json nested latest", "anonymous-residential/realtime", "", FeedJSONGzip, "/v2/anonymous-residential/realtime/latest.json.gz"},
+		{"mmdb latest", "anonymous", "", FeedMMDB, "/v2/anonymous/latest.mmdb"},
+		{"mmdb historical", "ipgeo", "20250323", FeedMMDB, "/v2/ipgeo/20250323/feed.mmdb"},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.Path; got != tc.wantPath {
+					t.Errorf("path = %q, want %q", got, tc.wantPath)
+				}
+				_, _ = w.Write([]byte("body"))
+			}))
+			defer srv.Close()
+
+			client := NewClient("secret")
+			client.FeedsBase = srv.URL
+
+			body, _, err := client.DownloadFeed(context.Background(), tc.feedType, tc.date, tc.format)
+			if err != nil {
+				t.Fatalf("DownloadFeed: %v", err)
+			}
+			_ = body.Close()
+		})
+	}
+}
+
+// A 403 must surface a sanitized APIError wrapping ErrForbidden, not the
+// upstream error page.
+func TestDownloadFeedForbiddenIsSanitized(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal detail that should not escape", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	_, _, err := client.DownloadFeed(context.Background(), "dch", "", FeedJSONGzip)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+	if !errors.Is(apiErr, ErrForbidden) {
+		t.Errorf("error = %v, want ErrForbidden", err)
+	}
+	if strings.Contains(err.Error(), "internal detail") {
+		t.Fatalf("error leaked upstream body: %q", err.Error())
+	}
+}
+
+// The feeds host redirects to the CDN; the Token must not follow across the
+// host boundary, or the Spur credential would leak to the third-party CDN.
+func TestDownloadFeedStripsTokenOnRedirect(t *testing.T) {
+	t.Parallel()
+
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Token"); got != "" {
+			t.Errorf("Token forwarded to CDN = %q, want empty", got)
+		}
+		_, _ = w.Write(gzipBytes(t, "{}\n"))
+	}))
+	defer cdn.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Token"); got != "secret" {
+			t.Errorf("Token on initial request = %q, want secret", got)
+		}
+		http.Redirect(w, r, cdn.URL+"/signed/feed.json.gz", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = origin.URL
+
+	body, _, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("DownloadFeed: %v", err)
+	}
+	_ = body.Close()
 }
 
 func TestLookupFeedType(t *testing.T) {
