@@ -31,6 +31,18 @@ claude mcp add spur -e SPUR_TOKEN=your-token-here -- spur mcp
 
 See [MCP server (Claude Desktop and friends)](#mcp-server-claude-desktop-and-friends) for Claude Desktop and other clients.
 
+## Demos
+
+| Authenticate & check status | Token status |
+| - | - |
+| ![spur auth demo](docs/demos/auth.gif) | ![spur status demo](docs/demos/status.gif) |
+
+| Look up an IP (`context`) | Inspect a service tag (`tag`) |
+| - | - |
+| ![spur context demo](docs/demos/context.gif) | ![spur tag demo](docs/demos/tag.gif) |
+
+<sub>GIFs are generated with [VHS](https://github.com/charmbracelet/vhs) from the tapes in [`docs/demos/`](docs/demos/) — run `vhs docs/demos/context.tape` to re-record.</sub>
+
 ## Install
 
 **Homebrew** (macOS and Linux; bundles bash/zsh/fish completions):
