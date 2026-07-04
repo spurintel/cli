@@ -1,0 +1,48 @@
+name: Release
+
+# Builds and publishes a release when release-please pushes a v* tag on merge to
+# main. GoReleaser reads the version from the tag, builds all six platform
+# binaries with checksums, and updates the Homebrew cask in spurintel/homebrew-tap.
+#
+# The built-in GITHUB_TOKEN can't push to a separate repo, so we mint a
+# spurintelbot App token scoped to this repo + homebrew-tap and hand it to
+# GoReleaser for both the release upload and the cross-repo cask commit.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            cli
+            homebrew-tap
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
