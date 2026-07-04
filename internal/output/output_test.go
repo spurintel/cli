@@ -291,6 +291,131 @@ func TestRenderStatusTextColor(t *testing.T) {
 	}
 }
 
+// sampleTag is a representative service tag exercising scalar, list, optional
+// boolean, and nested-metrics fields so every renderer path has something to
+// show. IsNoLog is left nil to exercise the absent-flag path.
+func sampleTag() spur.TagMetadata {
+	yes := spur.FlexBool(true)
+	return spur.TagMetadata{
+		Tag:         "OXYLABS_PROXY",
+		Name:        "Oxylabs Proxy",
+		Description: "Residential proxy network",
+		Website:     "https://oxylabs.io",
+		Categories:  []string{"RESIDENTIAL_PROXY", "ISP_PROXY"},
+		IsAnonymous: &yes,
+		Platforms:   []string{"WINDOWS", "MACOS"},
+		Protocols:   []string{"HTTP", "SOCKS"},
+		Metrics: &spur.TagMetrics{
+			DistinctIPs:       "123456",
+			DistinctASNs:      "789",
+			DistinctCountries: "42",
+		},
+	}
+}
+
+func TestRenderTagJSON(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatJSON, false, sampleTag()); err != nil {
+		t.Fatalf("Render json: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, esc) {
+		t.Errorf("tag json contains ANSI escape codes: %q", out)
+	}
+	var got spur.TagMetadata
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("tag json is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Tag != "OXYLABS_PROXY" {
+		t.Errorf("decoded tag = %q, want OXYLABS_PROXY", got.Tag)
+	}
+	// FlexNumber metrics must round-trip as bare numbers, not quoted strings.
+	if !strings.Contains(out, `"distinctIPs":123456`) {
+		t.Errorf("tag json metrics not emitted as bare number: %s", out)
+	}
+}
+
+func TestRenderTagCSV(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatCSV, false, sampleTag()); err != nil {
+		t.Fatalf("Render csv: %v", err)
+	}
+	records, err := csv.NewReader(&buf).ReadAll()
+	if err != nil {
+		t.Fatalf("tag csv does not parse: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("tag csv records = %d, want 2 (header + row)", len(records))
+	}
+	header, row := records[0], records[1]
+	if len(header) != len(row) {
+		t.Errorf("tag csv header has %d columns but row has %d", len(header), len(row))
+	}
+	if !slices.Contains(row, "OXYLABS_PROXY") {
+		t.Errorf("tag csv row missing tag: %v", row)
+	}
+	if !slices.Contains(row, "RESIDENTIAL_PROXY|ISP_PROXY") {
+		t.Errorf("tag csv row missing pipe-joined categories: %v", row)
+	}
+	if !slices.Contains(row, "123456") {
+		t.Errorf("tag csv row missing distinctIPs metric: %v", row)
+	}
+}
+
+func TestRenderTagTextNoColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, false, sampleTag()); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, esc) {
+		t.Errorf("--no-color tag text contains ANSI escape codes: %q", out)
+	}
+	for _, want := range []string{"OXYLABS_PROXY", "Oxylabs Proxy", "RESIDENTIAL_PROXY", "Anonymous", "WINDOWS", "HTTP", "Metrics", "123456"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tag text missing %q\n%s", want, out)
+		}
+	}
+	// An absent optional flag (IsNoLog) collapses to the muted placeholder
+	// rather than reading as a definite "false".
+	if strings.Contains(out, "No-log     false") {
+		t.Errorf("absent No-log flag rendered as false instead of placeholder\n%s", out)
+	}
+}
+
+func TestRenderTagTextColor(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, true, sampleTag()); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	if !strings.Contains(buf.String(), esc) {
+		t.Errorf("colored tag text has no ANSI escape codes: %q", buf.String())
+	}
+}
+
+// A tag whose metrics the API omitted must still render (no Metrics block, no
+// panic) so a sparsely-described tag doesn't break the report.
+func TestRenderTagTextNoMetrics(t *testing.T) {
+	t.Parallel()
+	tag := sampleTag()
+	tag.Metrics = nil
+	var buf bytes.Buffer
+	if err := Render(&buf, FormatText, false, tag); err != nil {
+		t.Fatalf("Render text: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "Metrics") {
+		t.Errorf("tag without metrics should omit the Metrics block\n%s", out)
+	}
+	if !strings.Contains(out, "OXYLABS_PROXY") {
+		t.Errorf("tag text missing tag identity\n%s", out)
+	}
+}
+
 func TestRenderUnknownFormat(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer

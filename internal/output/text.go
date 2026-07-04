@@ -31,6 +31,10 @@ func renderText(w io.Writer, color bool, v any) error {
 		return renderStatus(w, s, c)
 	case *spur.Status:
 		return renderStatus(w, s, *c)
+	case spur.TagMetadata:
+		return renderTagMetadata(w, s, c)
+	case *spur.TagMetadata:
+		return renderTagMetadata(w, s, *c)
 	case spur.IPContext:
 		return renderIPContext(w, s, c)
 	case *spur.IPContext:
@@ -140,6 +144,80 @@ func renderStatus(w io.Writer, s Styles, st spur.Status) error {
 	writeBlock(&b, s, blk, true)
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// renderTagMetadata lays out a service-tag report: an Overview block (name,
+// description, categories, anonymity), a Capabilities block of the boolean
+// attribute flags, a Reach block (platforms/protocols/targeting), and, when the
+// API returned them, an aggregate Metrics block. Optional flags that the API
+// omitted collapse to the muted placeholder rather than reading as "false".
+func renderTagMetadata(w io.Writer, s Styles, t spur.TagMetadata) error {
+	blocks := []block{
+		{name: "Overview", values: []kv{
+			{"Name", t.Name},
+			{"Description", t.Description},
+			{"Website", t.Website},
+			{"Categories", t.Categories},
+			{"Anonymous", flexBoolValue(t.IsAnonymous)},
+		}},
+		{name: "Capabilities", values: []kv{
+			{"No-log", flexBoolValue(t.IsNoLog)},
+			{"Enterprise", flexBoolValue(t.IsEnterprise)},
+			{"Multihop", flexBoolValue(t.AllowsMultihop)},
+			{"Crypto", flexBoolValue(t.AllowsCrypto)},
+			{"Free access", flexBoolValue(t.AllowsFreeAccess)},
+			{"Torrents", flexBoolValue(t.AllowsTorrents)},
+			{"Tracked", flexBoolValue(t.IsTracked)},
+			{"Inactive", flexBoolValue(t.IsInactive)},
+		}},
+		{name: "Reach", values: []kv{
+			{"Platforms", t.Platforms},
+			{"Protocols", t.Protocols},
+			{"Targeting", t.TargetingTypes},
+			{"Resold by", t.ResoldBy},
+		}},
+	}
+
+	if m := t.Metrics; m != nil {
+		blocks = append(blocks, block{name: "Metrics", values: []kv{
+			{"Distinct IPs", flexNumberValue(m.DistinctIPs)},
+			{"Distinct ASNs", flexNumberValue(m.DistinctASNs)},
+			{"Distinct ISPs", flexNumberValue(m.DistinctISPs)},
+			{"Distinct Countries", flexNumberValue(m.DistinctCountries)},
+			{"Avg Device Count", flexNumberValue(m.AverageDeviceCount)},
+			{"Churn Rate", flexNumberValue(m.ChurnRate)},
+		}})
+	}
+
+	label := t.Tag
+	if label == "" {
+		label = t.Name
+	}
+
+	var b strings.Builder
+	fmt.Fprintln(&b, s.Title.Render("◆  Tag ")+s.Value.Render(label))
+	for i, blk := range blocks {
+		writeBlock(&b, s, blk, i+1 == len(blocks))
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// flexBoolValue turns an optional FlexBool into a value formatValue can style:
+// the underlying bool when the API set the field, or the empty string (a muted
+// "—") when it was absent, so an unset flag never masquerades as a definite
+// "false".
+func flexBoolValue(b *spur.FlexBool) any {
+	if b == nil {
+		return ""
+	}
+	return bool(*b)
+}
+
+// flexNumberValue renders a metric as its numeric text, collapsing the zero
+// value (an empty FlexNumber) to a muted placeholder.
+func flexNumberValue(n spur.FlexNumber) any {
+	return n.String()
 }
 
 // writeBlock renders one block: a connector + name line, then a │-prefixed row

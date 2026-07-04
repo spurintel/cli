@@ -21,6 +21,10 @@ func renderCSV(w io.Writer, v any) error {
 		return writeStatusCSV(cw, c)
 	case *spur.Status:
 		return writeStatusCSV(cw, *c)
+	case spur.TagMetadata:
+		return writeTagMetadataCSV(cw, c)
+	case *spur.TagMetadata:
+		return writeTagMetadataCSV(cw, *c)
 	case spur.IPContext:
 		return writeIPContextCSV(cw, c)
 	case *spur.IPContext:
@@ -52,6 +56,63 @@ func writeStatusCSV(cw *csv.Writer, s spur.Status) error {
 	}
 	cw.Flush()
 	return cw.Error()
+}
+
+// tagMetadataCSVHeader flattens the tag report into scalar columns: the
+// identity and anonymity fields, pipe-joined category/platform/protocol lists,
+// and the aggregate metrics. Absent optional flags emit an empty cell so a
+// scripted reader can tell "unknown" from a definite false.
+var tagMetadataCSVHeader = []string{
+	"tag",
+	"name",
+	"categories",
+	"isAnonymous",
+	"platforms",
+	"protocols",
+	"metrics.distinctIPs",
+	"metrics.distinctASNs",
+	"metrics.distinctISPs",
+	"metrics.distinctCountries",
+	"metrics.averageDeviceCount",
+	"metrics.churnRate",
+}
+
+func writeTagMetadataCSV(cw *csv.Writer, t spur.TagMetadata) error {
+	if err := cw.Write(tagMetadataCSVHeader); err != nil {
+		return fmt.Errorf("write csv header: %w", err)
+	}
+
+	var m spur.TagMetrics
+	if t.Metrics != nil {
+		m = *t.Metrics
+	}
+	if err := cw.Write([]string{
+		t.Tag,
+		t.Name,
+		strings.Join(t.Categories, "|"),
+		flexBoolCSV(t.IsAnonymous),
+		strings.Join(t.Platforms, "|"),
+		strings.Join(t.Protocols, "|"),
+		m.DistinctIPs.String(),
+		m.DistinctASNs.String(),
+		m.DistinctISPs.String(),
+		m.DistinctCountries.String(),
+		m.AverageDeviceCount.String(),
+		m.ChurnRate.String(),
+	}); err != nil {
+		return fmt.Errorf("write csv record: %w", err)
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// flexBoolCSV renders an optional FlexBool for CSV: "true"/"false" when set, an
+// empty cell when the API omitted the field.
+func flexBoolCSV(b *spur.FlexBool) string {
+	if b == nil {
+		return ""
+	}
+	return strconv.FormatBool(bool(*b))
 }
 
 // ipContextCSVHeader is the column order shared by the single-value and batch
