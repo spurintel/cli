@@ -30,7 +30,7 @@ surrounding code before making structural changes.
 - `internal/tools/`, `internal/resources/`, `internal/prompts/` — the MCP surface
   behind `spur mcp`: five tools, schema/doc resources, and the `assess_ip` prompt,
   all wired to the shared `internal/spur` client.
-- `internal/buildinfo/` — ldflags-injected version, consumed by `spur version` and the API User-Agent.
+- `internal/buildinfo/` — ldflags-injected version, consumed by `spur version` and the API User-Agent. The User-Agent carries a `surface/<name>` token identifying the request's origin (set via `Client.Surface`); `spur mcp` sets `mcp`, plain CLI commands leave it empty.
 - `scripts/mcp-smoke.sh` — end-to-end stdio smoke test for `spur mcp`; run against
   a built binary. `SPUR_LIVE=1` adds authenticated calls.
 
