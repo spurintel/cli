@@ -207,6 +207,37 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 	}
 }
 
+func TestDownloadFeedSendsSurfaceInUserAgent(t *testing.T) {
+	t.Parallel()
+
+	payload := gzipBytes(t, `{"ip":"1.2.3.4"}`+"\n")
+
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+	client.Surface = "mcp"
+
+	body, _, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("DownloadFeed: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	if !strings.Contains(gotUA, "surface/mcp") {
+		t.Fatalf("User-Agent = %q, want to contain %q", gotUA, "surface/mcp")
+	}
+}
+
 // The date and format together select the artifact path: latest vs historical,
 // json.gz vs mmdb; a nested slug keeps its slash.
 func TestDownloadFeedPathSelection(t *testing.T) {

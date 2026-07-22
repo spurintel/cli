@@ -163,7 +163,7 @@ func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, 
 		return nil, 0, err
 	}
 	req.Header.Set("Token", c.Token)
-	req.Header.Set("User-Agent", userAgent())
+	req.Header.Set("User-Agent", c.userAgent())
 
 	resp, err := c.downloadHTTPClient().Do(req)
 	if err != nil {
