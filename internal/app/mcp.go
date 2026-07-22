@@ -68,7 +68,9 @@ func newMCPCmd(cf *configFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runMCPServer(cmd, cf.newClient(token))
+			client := cf.newClient(token)
+			client.Surface = "mcp"
+			return runMCPServer(cmd, client)
 		},
 	}
 }
