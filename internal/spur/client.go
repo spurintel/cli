@@ -19,10 +19,6 @@ const BaseURL = "https://api.spur.us"
 
 const maxResponseBodyBytes int64 = 1 << 20
 
-func userAgent() string {
-	return fmt.Sprintf("spur/%s (+https://spur.us)", buildinfo.Version)
-}
-
 // Client is a stateless-ish wrapper around net/http. Its only mutable state is
 // the embedded *http.Client; each API method is safe for concurrent use.
 type Client struct {
@@ -37,6 +33,21 @@ type Client struct {
 	// distinct host from Base and FeedsBase, overridable independently via
 	// config, and serves the dynamically filtered feed subsets.
 	ExportsBase string
+	// Surface identifies the calling surface for API-log attribution. Empty
+	// means the CLI surface; set to a short token like "mcp" to tag requests
+	// from a different caller (appended to the User-Agent as " surface/<x>").
+	Surface string
+}
+
+// userAgent builds the User-Agent header value. The CLI-default form is
+// unchanged; a non-empty Surface appends " surface/<surface>" so API logs can
+// attribute requests to a specific caller.
+func (c *Client) userAgent() string {
+	ua := fmt.Sprintf("spur/%s (+https://spur.us)", buildinfo.Version)
+	if c.Surface != "" {
+		ua += " surface/" + c.Surface
+	}
+	return ua
 }
 
 // NewClient constructs a Client with a sensible default timeout. The redirect
@@ -123,7 +134,7 @@ func (c *Client) doJSON(ctx context.Context, endpoint string, dst any) (Meta, er
 	}
 	req.Header.Set("Token", c.Token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", userAgent())
+	req.Header.Set("User-Agent", c.userAgent())
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

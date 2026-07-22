@@ -4,11 +4,61 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/spurintel/cli/internal/buildinfo"
 )
+
+func TestUserAgentDefaultSurface(t *testing.T) {
+	t.Parallel()
+
+	c := &Client{}
+	want := fmt.Sprintf("spur/%s (+https://spur.us)", buildinfo.Version)
+	if got := c.userAgent(); got != want {
+		t.Fatalf("userAgent() = %q, want %q", got, want)
+	}
+}
+
+func TestUserAgentWithSurface(t *testing.T) {
+	t.Parallel()
+
+	c := &Client{Surface: "mcp"}
+	def := fmt.Sprintf("spur/%s (+https://spur.us)", buildinfo.Version)
+	got := c.userAgent()
+	if !strings.HasPrefix(got, def) {
+		t.Fatalf("userAgent() = %q, want prefix %q", got, def)
+	}
+	if !strings.HasSuffix(got, " surface/mcp") {
+		t.Fatalf("userAgent() = %q, want suffix %q", got, " surface/mcp")
+	}
+}
+
+func TestDoJSONSendsSurfaceInUserAgent(t *testing.T) {
+	t.Parallel()
+
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient("token")
+	client.Base = srv.URL
+	client.Surface = "mcp"
+
+	if _, err := client.GetStatus(context.Background()); err != nil {
+		t.Fatalf("GetStatus: %v", err)
+	}
+	if !strings.Contains(gotUA, "surface/mcp") {
+		t.Fatalf("User-Agent = %q, want to contain %q", gotUA, "surface/mcp")
+	}
+}
 
 func TestReadBodyRejectsOversizeResponses(t *testing.T) {
 	t.Parallel()
