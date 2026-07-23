@@ -153,6 +153,46 @@ func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format
 	return c.doStream(ctx, c.FeedArtifactURL(feedType, date, format))
 }
 
+// ProbeFeedIntegrity fetches a feed artifact's CDN object-integrity values
+// (size + x-goog-hash CRC32C/MD5) WITHOUT downloading it, via a
+// "Range: bytes=0-0" GET that the CDN answers with a 206 carrying the hash
+// headers and the full size in Content-Range. Uses the same download client
+// and cross-host Token-stripping redirect policy as DownloadFeed. On 206/200
+// it returns integrity from the response headers; a non-2xx status is an
+// error. The (<=1 byte) body is always drained and closed. Callers treat any
+// error as "integrity unavailable" and omit it — this never fails a tool.
+func (c *Client) ProbeFeedIntegrity(ctx context.Context, feedType, date string, format FeedFormat) (FeedIntegrity, error) {
+	feedType = strings.Trim(strings.TrimSpace(feedType), "/")
+	if feedType == "" {
+		return FeedIntegrity{}, fmt.Errorf("feed type is required")
+	}
+
+	endpoint := c.FeedArtifactURL(feedType, date, format)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return FeedIntegrity{}, err
+	}
+	req.Header.Set("Token", c.Token)
+	req.Header.Set("User-Agent", c.userAgent())
+	req.Header.Set("Range", "bytes=0-0")
+
+	resp, err := c.downloadHTTPClient().Do(req)
+	if err != nil {
+		return FeedIntegrity{}, err
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return FeedIntegrity{}, newAPIError(resp.StatusCode)
+	}
+
+	return integrityFromResponse(resp), nil
+}
+
 // parseGoogHash extracts the crc32c and md5 digests from the raw values of an
 // X-Goog-Hash response header. Each element of values may itself be a
 // comma-joined list (crc32c=..,md5=..), which is how GCS emits the header when

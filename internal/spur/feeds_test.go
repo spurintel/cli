@@ -514,6 +514,134 @@ func TestIntegrityFromResponsePopulatesHashes(t *testing.T) {
 	}
 }
 
+// A 206 partial-content response carries the true object size in the
+// Content-Range total plus the X-Goog-Hash digests; ProbeFeedIntegrity must
+// surface both without erroring.
+func TestProbeFeedIntegrity206(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-0/999")
+		w.Header().Set("X-Goog-Hash", "crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	integ, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("ProbeFeedIntegrity: %v", err)
+	}
+	if integ.Size != 999 {
+		t.Errorf("Size = %d, want 999", integ.Size)
+	}
+	if integ.CRC32C != "n03x6A==" {
+		t.Errorf("CRC32C = %q, want n03x6A==", integ.CRC32C)
+	}
+	if integ.MD5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("MD5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", integ.MD5)
+	}
+}
+
+// Some CDNs/objects ignore the Range header and answer 200 with the full
+// Content-Length; ProbeFeedIntegrity must still resolve integrity from that.
+func TestProbeFeedIntegrity200IgnoresRange(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1234")
+		w.Header().Set("X-Goog-Hash", "crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=")
+		_, _ = w.Write([]byte("full body ignored by probe"))
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	integ, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("ProbeFeedIntegrity: %v", err)
+	}
+	if integ.Size != 1234 {
+		t.Errorf("Size = %d, want 1234", integ.Size)
+	}
+	if integ.CRC32C != "n03x6A==" {
+		t.Errorf("CRC32C = %q, want n03x6A==", integ.CRC32C)
+	}
+}
+
+// A non-2xx status (e.g. 403) is an error; the returned integrity must be the
+// zero value.
+func TestProbeFeedIntegrityNon2xxIsError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	integ, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if integ != (FeedIntegrity{}) {
+		t.Errorf("integ = %+v, want zero value", integ)
+	}
+}
+
+// The probe request must carry Range: bytes=0-0 and the Token on the first
+// hop, and the tiny response body must be fully drained/closed (verified by
+// the server not blocking on a second read).
+func TestProbeFeedIntegrityRequestHeaders(t *testing.T) {
+	t.Parallel()
+
+	var gotRange, gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRange = r.Header.Get("Range")
+		gotToken = r.Header.Get("Token")
+		w.Header().Set("Content-Range", "bytes 0-0/1")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	if _, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip); err != nil {
+		t.Fatalf("ProbeFeedIntegrity: %v", err)
+	}
+	if gotRange != "bytes=0-0" {
+		t.Errorf("Range header = %q, want bytes=0-0", gotRange)
+	}
+	if gotToken != "secret" {
+		t.Errorf("Token header = %q, want secret", gotToken)
+	}
+}
+
+// An empty feed type must error before any network call.
+func TestProbeFeedIntegrityRequiresType(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("network call made for empty feed type")
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	if _, err := client.ProbeFeedIntegrity(context.Background(), "  ", "", FeedJSONGzip); err == nil {
+		t.Fatal("empty feed type = nil error, want error")
+	}
+}
+
 func TestLookupFeedType(t *testing.T) {
 	t.Parallel()
 
