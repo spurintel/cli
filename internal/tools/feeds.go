@@ -42,7 +42,8 @@ type FeedStatusInput struct {
 
 // FeedStatusOutput wraps the feed's metadata document.
 type FeedStatusOutput struct {
-	Metadata spur.FeedMetadata `json:"metadata" jsonschema:"The feed's current metadata: date, generation/availability timestamps, relative location, and filesize for the JSON (and, where offered, MMDB) artifact."`
+	Metadata  spur.FeedMetadata   `json:"metadata" jsonschema:"The feed's current metadata: date, generation/availability timestamps, relative location, and filesize for the JSON (and, where offered, MMDB) artifact."`
+	Integrity *spur.FeedIntegrity `json:"integrity,omitempty" jsonschema:"CDN object-integrity for the latest JSON artifact (size + x-goog-hash CRC32C/MD5), probed from the CDN. Omitted if the probe was unavailable."`
 }
 
 // registerFeedStatus wires the feed_status tool, backed by the same
@@ -58,16 +59,28 @@ func registerFeedStatus(s *mcp.Server, c *spur.Client) {
 			"size (for the JSON artifact and, where offered, the MMDB). Use list_feeds " +
 			"for the valid type identifiers. Cheap metadata — no bulk data is returned.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in FeedStatusInput) (*mcp.CallToolResult, FeedStatusOutput, error) {
-		feedType, ok := spur.LookupFeedType(strings.TrimSpace(in.Type))
-		if !ok {
-			return toolError(fmt.Errorf("unknown feed type %q", in.Type), "Call list_feeds for the supported feed types."), FeedStatusOutput{}, nil
-		}
-		md, err := c.GetFeedMetadata(ctx, feedType.Name)
-		if err != nil {
-			return toolError(err, statusHint(err)), FeedStatusOutput{}, nil
-		}
-		return nil, FeedStatusOutput{Metadata: md}, nil
+		return feedStatus(ctx, c, in)
 	})
+}
+
+// feedStatus implements the feed_status tool body. It is factored out of the
+// mcp.AddTool closure so it can be exercised directly in tests. The integrity
+// probe is best-effort: a probe failure never fails the tool, it just omits
+// Integrity from the result.
+func feedStatus(ctx context.Context, c *spur.Client, in FeedStatusInput) (*mcp.CallToolResult, FeedStatusOutput, error) {
+	feedType, ok := spur.LookupFeedType(strings.TrimSpace(in.Type))
+	if !ok {
+		return toolError(fmt.Errorf("unknown feed type %q", in.Type), "Call list_feeds for the supported feed types."), FeedStatusOutput{}, nil
+	}
+	md, err := c.GetFeedMetadata(ctx, feedType.Name)
+	if err != nil {
+		return toolError(err, statusHint(err)), FeedStatusOutput{}, nil
+	}
+	out := FeedStatusOutput{Metadata: md}
+	if integ, err := c.ProbeFeedIntegrity(ctx, feedType.Name, "", spur.FeedJSONGzip); err == nil {
+		out.Integrity = &integ
+	}
+	return nil, out, nil
 }
 
 // FeedDownloadInput is the argument object for feed_download.
@@ -80,12 +93,13 @@ type FeedDownloadInput struct {
 // FeedDownloadOutput is a download pointer for a feed's data artifact: enough
 // metadata to decide whether to fetch it, plus the URL and command that do.
 type FeedDownloadOutput struct {
-	Type        string         `json:"type" jsonschema:"The feed type this pointer describes."`
-	Format      string         `json:"format" jsonschema:"The artifact format described: json or mmdb."`
-	File        *spur.FeedFile `json:"file,omitempty" jsonschema:"Metadata for the latest artifact: date, relative location, generation/availability timestamps, and filesize in bytes. Omitted when a historical date is requested — the metadata document only describes the latest release."`
-	DownloadURL string         `json:"download_url" jsonschema:"Absolute feeds-host URL of the artifact. It is authenticated with the Token header and 302-redirects to the CDN; it is not returned inline here."`
-	Command     string         `json:"command" jsonschema:"The spur CLI command that downloads this artifact."`
-	Note        string         `json:"note" jsonschema:"Why the bytes are not returned inline."`
+	Type        string              `json:"type" jsonschema:"The feed type this pointer describes."`
+	Format      string              `json:"format" jsonschema:"The artifact format described: json or mmdb."`
+	File        *spur.FeedFile      `json:"file,omitempty" jsonschema:"Metadata for the latest artifact: date, relative location, generation/availability timestamps, and filesize in bytes. Omitted when a historical date is requested — the metadata document only describes the latest release."`
+	DownloadURL string              `json:"download_url" jsonschema:"Absolute feeds-host URL of the artifact. It is authenticated with the Token header and 302-redirects to the CDN; it is not returned inline here."`
+	Command     string              `json:"command" jsonschema:"The spur CLI command that downloads this artifact."`
+	Note        string              `json:"note" jsonschema:"Why the bytes are not returned inline."`
+	Integrity   *spur.FeedIntegrity `json:"integrity,omitempty" jsonschema:"CDN object-integrity for the resolved artifact (size + x-goog-hash CRC32C/MD5), probed from the CDN. Present even for historical dates where 'file' is omitted. Omitted if the probe was unavailable."`
 }
 
 // registerFeedDownload wires the feed_download tool. Feeds are hundreds of
@@ -105,58 +119,71 @@ func registerFeedDownload(s *mcp.Server, c *spur.Client) {
 			"Use list_feeds for the valid type identifiers; 'format' selects json " +
 			"(default) or mmdb (only where offered).",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in FeedDownloadInput) (*mcp.CallToolResult, FeedDownloadOutput, error) {
-		feedType, ok := spur.LookupFeedType(strings.TrimSpace(in.Type))
-		if !ok {
-			return toolError(fmt.Errorf("unknown feed type %q", in.Type), "Call list_feeds for the supported feed types."), FeedDownloadOutput{}, nil
-		}
-
-		format := spur.FeedJSONGzip
-		formatName := "json"
-		switch strings.ToLower(strings.TrimSpace(in.Format)) {
-		case "", "json":
-			// default
-		case "mmdb":
-			format, formatName = spur.FeedMMDB, "mmdb"
-		default:
-			return toolError(fmt.Errorf("invalid format %q", in.Format), "Use json (default) or mmdb."), FeedDownloadOutput{}, nil
-		}
-
-		date, err := spur.ValidateHistoricalDate(in.Date)
-		if err != nil {
-			return toolError(err, "Use YYYYMMDD for a historical release, or omit 'date' for the latest."), FeedDownloadOutput{}, nil
-		}
-		if date != "" && strings.HasSuffix(feedType.Name, "/realtime") {
-			return toolError(fmt.Errorf("the realtime feed does not support a historical date"), "Omit 'date' for the realtime feed."), FeedDownloadOutput{}, nil
-		}
-
-		md, err := c.GetFeedMetadata(ctx, feedType.Name)
-		if err != nil {
-			return toolError(err, statusHint(err)), FeedDownloadOutput{}, nil
-		}
-
-		file := &md.JSON
-		command := "spur feed download " + feedType.Name
-		if format == spur.FeedMMDB {
-			if md.MMDB == nil {
-				return toolError(fmt.Errorf("the %q feed is not offered in MMDB format", feedType.Name), "Request format json instead."), FeedDownloadOutput{}, nil
-			}
-			file = md.MMDB
-			command += " --mmdb"
-		}
-		if date != "" {
-			// The metadata document only describes the latest release; its
-			// dates and sizes would be wrong for a historical artifact.
-			file = nil
-			command += " --date " + date
-		}
-
-		return nil, FeedDownloadOutput{
-			Type:        feedType.Name,
-			Format:      formatName,
-			File:        file,
-			DownloadURL: c.FeedArtifactURL(feedType.Name, date, format),
-			Command:     command,
-			Note:        "Metadata only. Spur feeds are large bulk files and are not returned inline over MCP; fetch the artifact with the command or a GET to download_url carrying the Token header.",
-		}, nil
+		return feedDownload(ctx, c, in)
 	})
+}
+
+// feedDownload implements the feed_download tool body. It is factored out of
+// the mcp.AddTool closure so it can be exercised directly in tests. The
+// integrity probe runs only after every validation/metadata step succeeds and
+// is best-effort: a probe failure never fails the tool, it just omits
+// Integrity from the result.
+func feedDownload(ctx context.Context, c *spur.Client, in FeedDownloadInput) (*mcp.CallToolResult, FeedDownloadOutput, error) {
+	feedType, ok := spur.LookupFeedType(strings.TrimSpace(in.Type))
+	if !ok {
+		return toolError(fmt.Errorf("unknown feed type %q", in.Type), "Call list_feeds for the supported feed types."), FeedDownloadOutput{}, nil
+	}
+
+	format := spur.FeedJSONGzip
+	formatName := "json"
+	switch strings.ToLower(strings.TrimSpace(in.Format)) {
+	case "", "json":
+		// default
+	case "mmdb":
+		format, formatName = spur.FeedMMDB, "mmdb"
+	default:
+		return toolError(fmt.Errorf("invalid format %q", in.Format), "Use json (default) or mmdb."), FeedDownloadOutput{}, nil
+	}
+
+	date, err := spur.ValidateHistoricalDate(in.Date)
+	if err != nil {
+		return toolError(err, "Use YYYYMMDD for a historical release, or omit 'date' for the latest."), FeedDownloadOutput{}, nil
+	}
+	if date != "" && strings.HasSuffix(feedType.Name, "/realtime") {
+		return toolError(fmt.Errorf("the realtime feed does not support a historical date"), "Omit 'date' for the realtime feed."), FeedDownloadOutput{}, nil
+	}
+
+	md, err := c.GetFeedMetadata(ctx, feedType.Name)
+	if err != nil {
+		return toolError(err, statusHint(err)), FeedDownloadOutput{}, nil
+	}
+
+	file := &md.JSON
+	command := "spur feed download " + feedType.Name
+	if format == spur.FeedMMDB {
+		if md.MMDB == nil {
+			return toolError(fmt.Errorf("the %q feed is not offered in MMDB format", feedType.Name), "Request format json instead."), FeedDownloadOutput{}, nil
+		}
+		file = md.MMDB
+		command += " --mmdb"
+	}
+	if date != "" {
+		// The metadata document only describes the latest release; its
+		// dates and sizes would be wrong for a historical artifact.
+		file = nil
+		command += " --date " + date
+	}
+
+	out := FeedDownloadOutput{
+		Type:        feedType.Name,
+		Format:      formatName,
+		File:        file,
+		DownloadURL: c.FeedArtifactURL(feedType.Name, date, format),
+		Command:     command,
+		Note:        "Metadata only. Spur feeds are large bulk files and are not returned inline over MCP; fetch the artifact with the command or a GET to download_url carrying the Token header.",
+	}
+	if integ, err := c.ProbeFeedIntegrity(ctx, feedType.Name, date, format); err == nil {
+		out.Integrity = &integ
+	}
+	return nil, out, nil
 }
