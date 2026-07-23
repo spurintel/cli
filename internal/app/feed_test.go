@@ -332,6 +332,39 @@ func TestDownloadMMDBStreamsRaw(t *testing.T) {
 	}
 }
 
+func TestShowDownloadProgress(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		silent           bool
+		dataToTerminal   bool
+		stderrIsTerminal bool
+		want             bool
+	}{
+		// The reported bug: data streaming to the terminal must NOT also draw
+		// the progress bar, or the two collide on the same screen.
+		{name: "data to terminal suppresses bar", dataToTerminal: true, stderrIsTerminal: true, want: false},
+		// Piped/redirected data (stdout not a terminal) keeps stdout clean, so
+		// the bar on stderr is safe and useful.
+		{name: "piped data, stderr terminal shows bar", dataToTerminal: false, stderrIsTerminal: true, want: true},
+		// --silent always wins.
+		{name: "silent suppresses bar", silent: true, dataToTerminal: false, stderrIsTerminal: true, want: false},
+		// No human watching stderr (piped/CI): no bar.
+		{name: "stderr not a terminal, no bar", dataToTerminal: false, stderrIsTerminal: false, want: false},
+		{name: "data to terminal but stderr not terminal", dataToTerminal: true, stderrIsTerminal: false, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := showDownloadProgress(tt.silent, tt.dataToTerminal, tt.stderrIsTerminal); got != tt.want {
+				t.Errorf("showDownloadProgress(silent=%v, dataToTerminal=%v, stderrIsTerminal=%v) = %v, want %v",
+					tt.silent, tt.dataToTerminal, tt.stderrIsTerminal, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveDownloadFormat(t *testing.T) {
 	t.Parallel()
 

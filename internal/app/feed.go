@@ -177,10 +177,18 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			// never gzip.)
 			expand := of.toStdout() || decompress
 
+			// When the feed data itself is streaming to an interactive terminal
+			// (no -o), the self-overwriting progress bar collides with the data
+			// scrolling past on the same screen. Suppress it in that case; the
+			// data is the output the user asked for. Piping or -o keeps stdout
+			// clean, so the bar is safe and useful there.
+			dataToTerminal := of.toStdout() && output.IsTerminal(cmd.OutOrStdout())
+
 			// Progress is a diagnostic: stderr only, and only when a human is
-			// watching. It never touches the stdout data channel.
+			// watching and the data channel isn't the same terminal. It never
+			// touches the stdout data channel.
 			var progress *progressLine
-			if !silent && output.IsTerminal(os.Stderr) {
+			if showDownloadProgress(silent, dataToTerminal, output.IsTerminal(os.Stderr)) {
 				w := cmd.ErrOrStderr()
 				progress = newProgressLine(w, of.colorEnabled(w), "Downloading "+slug)
 			}
@@ -205,6 +213,16 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&silent, "silent", false, "suppress the download progress indicator")
 	cmd.Flags().BoolVar(&verify, "verify", false, "hash the downloaded bytes and verify them against the CDN-reported checksum (crc32c/md5); a mismatch fails the command but a partially-written -o file is left in place")
 	return cmd
+}
+
+// showDownloadProgress decides whether to draw the download progress bar. It is
+// shown only when a human is watching stderr (stderrIsTerminal), the user has
+// not opted out (--silent), and the feed data is not itself streaming to the
+// same interactive terminal (dataToTerminal) — where the self-overwriting bar
+// would collide with the data scrolling past. Piping the data or writing it to
+// a file (-o) keeps stdout clean, so the bar is safe and useful there.
+func showDownloadProgress(silent, dataToTerminal, stderrIsTerminal bool) bool {
+	return !silent && !dataToTerminal && stderrIsTerminal
 }
 
 // resolveDownloadFormat picks the artifact format from the explicit flags,
