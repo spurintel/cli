@@ -427,15 +427,15 @@ func sampleFeedMetadata() spur.FeedMetadata {
 			GeneratedAt: "2025-03-24T00:59:41Z",
 			AvailableAt: "2025-03-24T00:59:56Z",
 			Filesize:    89553131,
-			CRC32C:      "n2gEqQ==",
-			MD5:         "XUFAKrxLKna5cZ2REBfFkg==",
+			CRC32C:      "9f6804a9",
+			MD5:         "5d41402abc4b2a76b9719d911017c592",
 		},
 		MMDB: &spur.FeedFile{
 			Date:     "20250324",
 			Location: "20250324/feed.mmdb",
 			Filesize: 42,
-			CRC32C:   "AAAAAA==",
-			MD5:      "1B2M2Y8AsgTpgAmY7PhCfg==",
+			CRC32C:   "00000000",
+			MD5:      "d41d8cd98f00b204e9800998ecf8427e",
 		},
 	}
 }
@@ -461,7 +461,7 @@ func TestRenderFeedMetadataJSON(t *testing.T) {
 	if got.Type != "anonymous" || got.JSON.Filesize != 89553131 {
 		t.Errorf("decoded feed metadata = %+v", got)
 	}
-	if got.JSON.CRC32C != "n2gEqQ==" || got.JSON.MD5 != "XUFAKrxLKna5cZ2REBfFkg==" {
+	if got.JSON.CRC32C != "9f6804a9" || got.JSON.MD5 != "5d41402abc4b2a76b9719d911017c592" {
 		t.Errorf("decoded feed metadata digests = %+v", got.JSON)
 	}
 	// Filesize round-trips as a bare number, not a quoted string.
@@ -502,7 +502,7 @@ func TestRenderFeedMetadataCSV(t *testing.T) {
 	if !slices.Contains(row, "anonymous") {
 		t.Errorf("feed csv row missing feed type: %v", row)
 	}
-	if !slices.Contains(row, "n2gEqQ==") || !slices.Contains(row, "XUFAKrxLKna5cZ2REBfFkg==") {
+	if !slices.Contains(row, "9f6804a9") || !slices.Contains(row, "5d41402abc4b2a76b9719d911017c592") {
 		t.Errorf("feed csv row missing json digests: %v", row)
 	}
 }
@@ -555,7 +555,7 @@ func TestRenderFeedMetadataTextNoColor(t *testing.T) {
 	if strings.Contains(out, esc) {
 		t.Errorf("--no-color feed text contains ANSI escape codes: %q", out)
 	}
-	for _, want := range []string{"Feed", "anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB", "CRC32C", "n2gEqQ==", "MD5", "XUFAKrxLKna5cZ2REBfFkg=="} {
+	for _, want := range []string{"Feed", "anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB", "CRC32C", "9f6804a9", "MD5", "5d41402abc4b2a76b9719d911017c592"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("feed text missing %q\n%s", want, out)
 		}

@@ -4,8 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/md5"
-	"encoding/base64"
-	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash"
 	"hash/crc32"
@@ -357,6 +356,7 @@ func downloadFeed(
 }
 
 // verifyFeedIntegrity compares the locally-computed CRC32C/MD5 digests
+// (lowercase hex, matching the stored/displayed FeedIntegrity representation)
 // against the CDN-reported ones in integ, checking only the digests the CDN
 // actually reported. A caller that asked to verify against a response
 // reporting neither digest gets a clear error rather than a silent no-op.
@@ -365,14 +365,12 @@ func verifyFeedIntegrity(integ spur.FeedIntegrity, crc32cHash hash.Hash32, md5Ha
 		return fmt.Errorf("--verify requested but the CDN did not report a checksum to verify against")
 	}
 	if integ.CRC32C != "" {
-		var sum [4]byte
-		binary.BigEndian.PutUint32(sum[:], crc32cHash.Sum32())
-		if got := base64.StdEncoding.EncodeToString(sum[:]); got != integ.CRC32C {
+		if got := fmt.Sprintf("%08x", crc32cHash.Sum32()); got != integ.CRC32C {
 			return fmt.Errorf("feed integrity check failed: crc32c mismatch (expected %s, got %s)", integ.CRC32C, got)
 		}
 	}
 	if integ.MD5 != "" {
-		if got := base64.StdEncoding.EncodeToString(md5Hash.Sum(nil)); got != integ.MD5 {
+		if got := hex.EncodeToString(md5Hash.Sum(nil)); got != integ.MD5 {
 			return fmt.Errorf("feed integrity check failed: md5 mismatch (expected %s, got %s)", integ.MD5, got)
 		}
 	}

@@ -87,8 +87,8 @@ func TestFeedStatusPopulatesIntegrityOnSuccessfulProbe(t *testing.T) {
 	if out.Integrity.Size != 999 {
 		t.Errorf("Integrity.Size = %d, want 999", out.Integrity.Size)
 	}
-	if out.Integrity.CRC32C != "n03x6A==" {
-		t.Errorf("Integrity.CRC32C = %q, want n03x6A==", out.Integrity.CRC32C)
+	if out.Integrity.CRC32C != "9f4df1e8" {
+		t.Errorf("Integrity.CRC32C = %q, want 9f4df1e8", out.Integrity.CRC32C)
 	}
 }
 

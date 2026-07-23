@@ -207,11 +207,13 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 	if integ.Size != int64(len(payload)) {
 		t.Errorf("integ.Size = %d, want %d", integ.Size, len(payload))
 	}
-	if integ.CRC32C != "n03x6A==" {
-		t.Errorf("integ.CRC32C = %q, want n03x6A==", integ.CRC32C)
+	// The header (as GCS actually sends it) is base64; the stored/displayed
+	// FeedIntegrity value is the lowercase-hex equivalent.
+	if integ.CRC32C != "9f4df1e8" {
+		t.Errorf("integ.CRC32C = %q, want 9f4df1e8", integ.CRC32C)
 	}
-	if integ.MD5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
-		t.Errorf("integ.MD5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", integ.MD5)
+	if integ.MD5 != "3a393d737761726520796f75206b696464696e67" {
+		t.Errorf("integ.MD5 = %q, want 3a393d737761726520796f75206b696464696e67", integ.MD5)
 	}
 }
 
@@ -493,7 +495,8 @@ func TestIntegrityFromResponseSizeFallback(t *testing.T) {
 }
 
 // integrityFromResponse must populate CRC32C/MD5 from X-Goog-Hash alongside
-// Size, not just Size alone.
+// Size, not just Size alone. The header is base64 (real GCS behavior);
+// integrityFromResponse decodes it to lowercase hex.
 func TestIntegrityFromResponsePopulatesHashes(t *testing.T) {
 	t.Parallel()
 
@@ -503,11 +506,11 @@ func TestIntegrityFromResponsePopulatesHashes(t *testing.T) {
 	}
 
 	got := integrityFromResponse(resp)
-	if got.CRC32C != "n03x6A==" {
-		t.Errorf("CRC32C = %q, want n03x6A==", got.CRC32C)
+	if got.CRC32C != "9f4df1e8" {
+		t.Errorf("CRC32C = %q, want 9f4df1e8", got.CRC32C)
 	}
-	if got.MD5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
-		t.Errorf("MD5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", got.MD5)
+	if got.MD5 != "3a393d737761726520796f75206b696464696e67" {
+		t.Errorf("MD5 = %q, want 3a393d737761726520796f75206b696464696e67", got.MD5)
 	}
 	if got.Size != 42 {
 		t.Errorf("Size = %d, want 42", got.Size)
@@ -538,11 +541,11 @@ func TestProbeFeedIntegrity206(t *testing.T) {
 	if integ.Size != 999 {
 		t.Errorf("Size = %d, want 999", integ.Size)
 	}
-	if integ.CRC32C != "n03x6A==" {
-		t.Errorf("CRC32C = %q, want n03x6A==", integ.CRC32C)
+	if integ.CRC32C != "9f4df1e8" {
+		t.Errorf("CRC32C = %q, want 9f4df1e8", integ.CRC32C)
 	}
-	if integ.MD5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
-		t.Errorf("MD5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", integ.MD5)
+	if integ.MD5 != "3a393d737761726520796f75206b696464696e67" {
+		t.Errorf("MD5 = %q, want 3a393d737761726520796f75206b696464696e67", integ.MD5)
 	}
 }
 
@@ -568,8 +571,8 @@ func TestProbeFeedIntegrity200IgnoresRange(t *testing.T) {
 	if integ.Size != 1234 {
 		t.Errorf("Size = %d, want 1234", integ.Size)
 	}
-	if integ.CRC32C != "n03x6A==" {
-		t.Errorf("CRC32C = %q, want n03x6A==", integ.CRC32C)
+	if integ.CRC32C != "9f4df1e8" {
+		t.Errorf("CRC32C = %q, want 9f4df1e8", integ.CRC32C)
 	}
 }
 

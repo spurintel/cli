@@ -2,6 +2,8 @@ package spur
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -217,14 +219,31 @@ func parseGoogHash(values []string) (crc32c, md5 string) {
 // headers. Size prefers the total from a Content-Range header (present on
 // partial-content responses, where Content-Length reflects only the returned
 // range) and falls back to Content-Length, else -1 when neither is available.
-// CRC32C/MD5 come from X-Goog-Hash via parseGoogHash.
+// CRC32C/MD5 come from X-Goog-Hash via parseGoogHash, base64-decoded and
+// re-encoded as lowercase hex — the header itself is always base64 (that's
+// what GCS sends), but everything downstream of this function stores/displays
+// the digest as hex for readability.
 func integrityFromResponse(resp *http.Response) FeedIntegrity {
 	crc32c, md5 := parseGoogHash(resp.Header.Values("X-Goog-Hash"))
 	return FeedIntegrity{
 		Size:   sizeFromResponse(resp),
-		CRC32C: crc32c,
-		MD5:    md5,
+		CRC32C: b64ToHex(crc32c),
+		MD5:    b64ToHex(md5),
 	}
+}
+
+// b64ToHex decodes a standard-base64 digest (as X-Goog-Hash carries it) to
+// lowercase hex. An empty input or a decode failure returns "" — best-effort,
+// never an error — so a malformed or absent digest just yields an absent one.
+func b64ToHex(s string) string {
+	if s == "" {
+		return ""
+	}
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(raw)
 }
 
 // sizeFromResponse resolves the object's total size: the Content-Range total
