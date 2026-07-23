@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/md5"
+	"encoding/base64"
+	"encoding/binary"
+	"fmt"
+	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +16,22 @@ import (
 
 	"github.com/spurintel/cli/internal/spur"
 )
+
+// googHash computes the base64 crc32c/md5 digests X-Goog-Hash would carry for
+// raw, and formats them as a single X-Goog-Hash header value the way GCS does
+// (comma-joined).
+func googHash(raw []byte) string {
+	c := crc32.New(crc32.MakeTable(crc32.Castagnoli))
+	_, _ = c.Write(raw)
+	var sum [4]byte
+	binary.BigEndian.PutUint32(sum[:], c.Sum32())
+	crc32c := base64.StdEncoding.EncodeToString(sum[:])
+
+	m := md5.Sum(raw)
+	md5b64 := base64.StdEncoding.EncodeToString(m[:])
+
+	return "crc32c=" + crc32c + ",md5=" + md5b64
+}
 
 // gzipString returns plain compressed with gzip, for feeding a fake feed body.
 func gzipString(t *testing.T, plain string) []byte {
@@ -99,7 +120,7 @@ func TestDownloadFeedDecompressesToStdout(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), true, nil); err != nil {
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), true, nil, false, nil); err != nil {
 		t.Fatalf("downloadFeed: %v", err)
 	}
 	if dst.String() != ndjson {
@@ -122,7 +143,7 @@ func TestDownloadFeedRawToFile(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil); err != nil {
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, false, nil); err != nil {
 		t.Fatalf("downloadFeed: %v", err)
 	}
 	if !bytes.Equal(dst.Bytes(), raw) {
@@ -144,7 +165,7 @@ func TestDownloadFeedForbiddenIsClear(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedJSONGzip, bufSink(&dst), true, nil)
+	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedJSONGzip, bufSink(&dst), true, nil, false, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -179,7 +200,7 @@ func TestDownloadMMDBNotOfferedIsClear(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedMMDB, bufSink(&dst), false, nil)
+	err := downloadFeed(context.Background(), client, "dch", "", spur.FeedMMDB, bufSink(&dst), false, nil, false, nil)
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -213,7 +234,7 @@ func TestDownloadMMDBStreamsRaw(t *testing.T) {
 	client.FeedsBase = srv.URL
 
 	var dst bytes.Buffer
-	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedMMDB, bufSink(&dst), true, nil); err != nil {
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedMMDB, bufSink(&dst), true, nil, false, nil); err != nil {
 		t.Fatalf("downloadFeed: %v", err)
 	}
 	if dst.String() != mmdb {
@@ -298,5 +319,210 @@ func TestResolveDownloadSlug(t *testing.T) {
 				t.Errorf("resolveDownloadSlug(%q, %v, %v) = %q, want %q", tc.arg, tc.ipv6, tc.realtime, got, tc.want)
 			}
 		})
+	}
+}
+
+// A successful download always reports the CDN's size and both digests to
+// the summary writer, with no --verify involved.
+func TestDownloadFeedSummaryReportsIntegrity(t *testing.T) {
+	t.Parallel()
+
+	raw := gzipString(t, `{"ip":"1.2.3.4"}`+"\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Goog-Hash", googHash(raw))
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst, summary bytes.Buffer
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, false, &summary); err != nil {
+		t.Fatalf("downloadFeed: %v", err)
+	}
+	got := summary.String()
+	if !strings.Contains(got, fmt.Sprintf("size=%d bytes", len(raw))) {
+		t.Errorf("summary %q should report the size", got)
+	}
+	if !strings.Contains(got, "crc32c=") {
+		t.Errorf("summary %q should report crc32c", got)
+	}
+	if !strings.Contains(got, "md5=") {
+		t.Errorf("summary %q should report md5", got)
+	}
+	if strings.Contains(got, "verified") {
+		t.Errorf("summary %q should not claim verification when --verify was not used", got)
+	}
+}
+
+// A nil summary writer (the --silent path) means nothing is written, and the
+// download still succeeds and produces the expected bytes.
+func TestDownloadFeedNilSummarySuppressed(t *testing.T) {
+	t.Parallel()
+
+	ndjson := `{"ip":"1.2.3.4"}` + "\n"
+	raw := gzipString(t, ndjson)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst bytes.Buffer
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), true, nil, false, nil); err != nil {
+		t.Fatalf("downloadFeed: %v", err)
+	}
+	if dst.String() != ndjson {
+		t.Errorf("output = %q, want %q", dst.String(), ndjson)
+	}
+}
+
+// --verify with matching digests succeeds and the summary notes verification.
+func TestDownloadFeedVerifyMatchSucceeds(t *testing.T) {
+	t.Parallel()
+
+	raw := gzipString(t, `{"ip":"1.2.3.4"}`+"\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Goog-Hash", googHash(raw))
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst, summary bytes.Buffer
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, true, &summary); err != nil {
+		t.Fatalf("downloadFeed: %v", err)
+	}
+	if !strings.Contains(summary.String(), "verified") {
+		t.Errorf("summary %q should note the digests were verified", summary.String())
+	}
+}
+
+// --verify against a served body whose reported crc32c does not match the raw
+// bytes fails clearly, naming crc32c.
+func TestDownloadFeedVerifyMismatchCRC32C(t *testing.T) {
+	t.Parallel()
+
+	raw := gzipString(t, `{"ip":"1.2.3.4"}`+"\n")
+	good := googHash(raw)
+	// Corrupt only the crc32c half of the header, keep a valid-looking md5.
+	bad := strings.Replace(good, "crc32c=", "crc32c=AAAAAA==,ignored=", 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Goog-Hash", bad)
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst bytes.Buffer
+	err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, true, nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "crc32c") {
+		t.Errorf("error %q should name crc32c", err.Error())
+	}
+}
+
+// --verify against a served body whose reported md5 does not match the raw
+// bytes fails clearly, naming md5.
+func TestDownloadFeedVerifyMismatchMD5(t *testing.T) {
+	t.Parallel()
+
+	raw := gzipString(t, `{"ip":"1.2.3.4"}`+"\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Goog-Hash", "md5=AAAAAAAAAAAAAAAAAAAAAA==")
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst bytes.Buffer
+	err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, true, nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "md5") {
+		t.Errorf("error %q should name md5", err.Error())
+	}
+}
+
+// --verify hashes the RAW, pre-decompress bytes: with expand=true (the stdout
+// decompress path) the digest served must still match the COMPRESSED bytes,
+// proving the hash covers the gzip stream, not the expanded JSON.
+func TestDownloadFeedVerifyHashesRawGzipBytes(t *testing.T) {
+	t.Parallel()
+
+	const ndjson = `{"ip":"1.2.3.4"}` + "\n"
+	raw := gzipString(t, ndjson)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Goog-Hash", googHash(raw))
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst bytes.Buffer
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), true, nil, true, nil); err != nil {
+		t.Fatalf("downloadFeed: %v", err)
+	}
+	if dst.String() != ndjson {
+		t.Errorf("decompressed output = %q, want %q", dst.String(), ndjson)
+	}
+}
+
+// --verify with no X-Goog-Hash at all from the server is a clear error; the
+// same response without --verify succeeds and reports the size.
+func TestDownloadFeedVerifyNoChecksumIsError(t *testing.T) {
+	t.Parallel()
+
+	raw := gzipString(t, `{"ip":"1.2.3.4"}`+"\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst bytes.Buffer
+	err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, true, nil)
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "checksum") {
+		t.Errorf("error %q should say no checksum was available", err.Error())
+	}
+}
+
+func TestDownloadFeedNoChecksumWithoutVerifySucceeds(t *testing.T) {
+	t.Parallel()
+
+	raw := gzipString(t, `{"ip":"1.2.3.4"}`+"\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(raw)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	var dst, summary bytes.Buffer
+	if err := downloadFeed(context.Background(), client, "anonymous", "", spur.FeedJSONGzip, bufSink(&dst), false, nil, false, &summary); err != nil {
+		t.Fatalf("downloadFeed: %v", err)
+	}
+	if !strings.Contains(summary.String(), fmt.Sprintf("size=%d bytes", len(raw))) {
+		t.Errorf("summary %q should report the size", summary.String())
 	}
 }
