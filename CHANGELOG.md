@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/spurintel/cli/compare/v0.2.0...v0.2.1) (2026-07-22)
+
+
+### Features
+
+* **dev-757:** set MCP user agent for API log attribution ([#34](https://github.com/spurintel/cli/issues/34)) ([4a2124d](https://github.com/spurintel/cli/commit/4a2124dd0fd3603faeb87915c6b24d0f22966927))
+
 ## [0.2.0](https://github.com/spurintel/cli/compare/v0.1.0...v0.2.0) (2026-07-04)
 
 
