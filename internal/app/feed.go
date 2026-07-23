@@ -202,7 +202,7 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "download the newline-JSON gzip artifact (overrides the ipgeo MMDB default)")
 	cmd.Flags().BoolVar(&decompress, "decompress", false, "decompress the gzip when writing JSON to a file (-o); stdout JSON is always decompressed")
 	cmd.Flags().BoolVar(&silent, "silent", false, "suppress the download progress indicator")
-	cmd.Flags().BoolVar(&verify, "verify", false, "hash the downloaded bytes and verify them against the CDN-reported checksum (crc32c/md5)")
+	cmd.Flags().BoolVar(&verify, "verify", false, "hash the downloaded bytes and verify them against the CDN-reported checksum (crc32c/md5); a mismatch fails the command but a partially-written -o file is left in place")
 	return cmd
 }
 

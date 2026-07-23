@@ -57,7 +57,9 @@ func registerFeedStatus(s *mcp.Server, c *spur.Client) {
 		Description: "Fetches the current metadata for a Spur data feed: the file's date, " +
 			"when it was generated and made available, its relative location, and its " +
 			"size (for the JSON artifact and, where offered, the MMDB). Use list_feeds " +
-			"for the valid type identifiers. Cheap metadata — no bulk data is returned.",
+			"for the valid type identifiers. Also does a cheap ranged probe of the CDN " +
+			"for the latest JSON artifact's integrity headers (size, CRC32C, MD5); no " +
+			"bulk feed data is downloaded.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in FeedStatusInput) (*mcp.CallToolResult, FeedStatusOutput, error) {
 		return feedStatus(ctx, c, in)
 	})
