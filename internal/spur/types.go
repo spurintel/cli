@@ -143,13 +143,26 @@ type FeedMetadata struct {
 // FeedFile describes one downloadable feed artifact: where it lives relative to
 // the feed root and when it was produced. GeneratedAt, AvailableAt, and Filesize
 // are absent on the realtime feed, which carries only Date and Location, so they
-// are optional.
+// are optional. CRC32C and MD5 do not come from this metadata document at all;
+// they are populated by a best-effort CDN probe of the artifact itself and are
+// empty when that probe was not run or failed.
 type FeedFile struct {
 	Date        string `json:"date" jsonschema:"The feed's date. YYYYMMDD for daily feeds; an ISO8601 timestamp for the realtime feed."`
 	Location    string `json:"location" jsonschema:"Path to the feed file relative to the feed root, e.g. 20250324/feed.json.gz."`
 	GeneratedAt string `json:"generated_at,omitempty" jsonschema:"When the feed was generated, in ISO8601 format."`
 	AvailableAt string `json:"available_at,omitempty" jsonschema:"When the feed was made available, in ISO8601 format."`
 	Filesize    int64  `json:"filesize,omitempty" jsonschema:"Size of the feed file in bytes."`
+	CRC32C      string `json:"crc32c,omitempty" jsonschema:"Lowercase hex CRC32C (Castagnoli) digest of the feed file, derived from the CDN's x-goog-hash. Populated by a CDN probe, not the metadata document; empty when unavailable."`
+	MD5         string `json:"md5,omitempty" jsonschema:"Lowercase hex MD5 digest of the feed file, derived from the CDN's x-goog-hash. Populated by a CDN probe, not the metadata document; empty when unavailable or for composite objects GCS does not MD5."`
+}
+
+// FeedIntegrity carries the size and content-hash information a feed download
+// response exposes, so callers can verify a streamed artifact against what the
+// CDN claims to have sent without re-deriving header parsing themselves.
+type FeedIntegrity struct {
+	Size   int64  `json:"size" jsonschema:"Object size in bytes from the CDN response (Content-Range total, else Content-Length). -1 when unknown."`
+	CRC32C string `json:"crc32c,omitempty" jsonschema:"Lowercase hex CRC32C (Castagnoli) digest, derived from x-goog-hash."`
+	MD5    string `json:"md5,omitempty" jsonschema:"Lowercase hex MD5 digest, derived from x-goog-hash. Absent for composite/large objects GCS does not MD5."`
 }
 
 // Meta carries the response headers that accompany a Context API call. It is

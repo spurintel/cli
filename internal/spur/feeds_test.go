@@ -168,7 +168,8 @@ func gzipBytes(t *testing.T, plain string) []byte {
 }
 
 // DownloadFeed hits the latest .json.gz path with the Token header and streams
-// the (compressed) body back verbatim, along with the CDN Content-Length.
+// the (compressed) body back verbatim, along with the CDN's integrity (size
+// and X-Goog-Hash digests).
 func TestDownloadFeedStreamsBody(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +183,7 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 			t.Errorf("Token header = %q, want secret", got)
 		}
 		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("X-Goog-Hash", "crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=")
 		_, _ = w.Write(payload)
 	}))
 	defer srv.Close()
@@ -189,7 +191,7 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 	client := NewClient("secret")
 	client.FeedsBase = srv.URL
 
-	body, size, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	body, integ, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
 	if err != nil {
 		t.Fatalf("DownloadFeed: %v", err)
 	}
@@ -202,8 +204,52 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 	if !bytes.Equal(got, payload) {
 		t.Errorf("streamed body did not match the served bytes")
 	}
-	if size != int64(len(payload)) {
-		t.Errorf("size = %d, want %d", size, len(payload))
+	if integ.Size != int64(len(payload)) {
+		t.Errorf("integ.Size = %d, want %d", integ.Size, len(payload))
+	}
+	// The header (as GCS actually sends it) is base64; the stored/displayed
+	// FeedIntegrity value is the lowercase-hex equivalent.
+	if integ.CRC32C != "9f4df1e8" {
+		t.Errorf("integ.CRC32C = %q, want 9f4df1e8", integ.CRC32C)
+	}
+	if integ.MD5 != "3a393d737761726520796f75206b696464696e67" {
+		t.Errorf("integ.MD5 = %q, want 3a393d737761726520796f75206b696464696e67", integ.MD5)
+	}
+}
+
+// When the server omits X-Goog-Hash, DownloadFeed still returns the size but
+// leaves both digest fields empty rather than erroring.
+func TestDownloadFeedNoHashHeader(t *testing.T) {
+	t.Parallel()
+
+	payload := gzipBytes(t, `{"ip":"1.2.3.4"}`+"\n")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	body, integ, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("DownloadFeed: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	if integ.Size != int64(len(payload)) {
+		t.Errorf("integ.Size = %d, want %d", integ.Size, len(payload))
+	}
+	if integ.CRC32C != "" {
+		t.Errorf("integ.CRC32C = %q, want empty", integ.CRC32C)
+	}
+	if integ.MD5 != "" {
+		t.Errorf("integ.MD5 = %q, want empty", integ.MD5)
 	}
 }
 
@@ -337,6 +383,266 @@ func TestDownloadFeedStripsTokenOnRedirect(t *testing.T) {
 		t.Fatalf("DownloadFeed: %v", err)
 	}
 	_ = body.Close()
+}
+
+// x-goog-hash may pack both digests into one comma-joined header value;
+// parseGoogHash must split on the comma and recover both.
+func TestParseGoogHashSingleCommaJoinedLine(t *testing.T) {
+	t.Parallel()
+
+	crc32c, md5 := parseGoogHash([]string{"crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc="})
+	if crc32c != "n03x6A==" {
+		t.Errorf("crc32c = %q, want n03x6A==", crc32c)
+	}
+	if md5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("md5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", md5)
+	}
+}
+
+// x-goog-hash may also arrive as multiple separate header lines, one digest
+// per line; parseGoogHash must recover both regardless of ordering.
+func TestParseGoogHashMultipleLines(t *testing.T) {
+	t.Parallel()
+
+	crc32c, md5 := parseGoogHash([]string{"md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=", "crc32c=n03x6A=="})
+	if crc32c != "n03x6A==" {
+		t.Errorf("crc32c = %q, want n03x6A==", crc32c)
+	}
+	if md5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("md5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", md5)
+	}
+}
+
+// Edge cases: only one digest present, an unknown key mixed in, and empty/nil
+// input must all resolve without panicking or leaking the unknown key.
+func TestParseGoogHashEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		values     []string
+		wantCRC32C string
+		wantMD5    string
+	}{
+		{"only crc32c", []string{"crc32c=n03x6A=="}, "n03x6A==", ""},
+		{"only md5", []string{"md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc="}, "", "Ojk9c3dhcmUgeW91IGtpZGRpbmc="},
+		{"unknown key ignored", []string{"crc32c=n03x6A==,goog-generation=17"}, "n03x6A==", ""},
+		{"nil input", nil, "", ""},
+		{"empty slice", []string{}, "", ""},
+		{"empty string element", []string{""}, "", ""},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			crc32c, md5 := parseGoogHash(tc.values)
+			if crc32c != tc.wantCRC32C {
+				t.Errorf("crc32c = %q, want %q", crc32c, tc.wantCRC32C)
+			}
+			if md5 != tc.wantMD5 {
+				t.Errorf("md5 = %q, want %q", md5, tc.wantMD5)
+			}
+		})
+	}
+}
+
+// A 206 partial-content response carries the true object size in the
+// Content-Range total, not the Content-Length of the returned range;
+// integrityFromResponse must prefer the range total.
+func TestIntegrityFromResponsePrefersContentRangeTotal(t *testing.T) {
+	t.Parallel()
+
+	resp := &http.Response{
+		StatusCode:    http.StatusPartialContent,
+		Header:        http.Header{"Content-Range": []string{"bytes 0-0/12345"}, "Content-Length": []string{"1"}},
+		ContentLength: 1,
+	}
+
+	got := integrityFromResponse(resp)
+	if got.Size != 12345 {
+		t.Errorf("Size = %d, want 12345", got.Size)
+	}
+}
+
+// Without a Content-Range header, Size falls back to Content-Length; when
+// neither is usable it reports -1 rather than a misleading zero.
+func TestIntegrityFromResponseSizeFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		header        http.Header
+		contentLength int64
+		wantSize      int64
+	}{
+		{"content-length header only", http.Header{"Content-Length": []string{"500"}}, -1, 500},
+		{"resp.ContentLength known", http.Header{}, 500, 500},
+		{"garbage content-length header", http.Header{"Content-Length": []string{"nope"}}, -1, -1},
+		{"missing everything", http.Header{}, -1, -1},
+		{"content-range with unknown total", http.Header{"Content-Range": []string{"bytes 0-0/*"}}, -1, -1},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			resp := &http.Response{Header: tc.header, ContentLength: tc.contentLength}
+			got := integrityFromResponse(resp)
+			if got.Size != tc.wantSize {
+				t.Errorf("Size = %d, want %d", got.Size, tc.wantSize)
+			}
+		})
+	}
+}
+
+// integrityFromResponse must populate CRC32C/MD5 from X-Goog-Hash alongside
+// Size, not just Size alone. The header is base64 (real GCS behavior);
+// integrityFromResponse decodes it to lowercase hex.
+func TestIntegrityFromResponsePopulatesHashes(t *testing.T) {
+	t.Parallel()
+
+	resp := &http.Response{
+		Header:        http.Header{"X-Goog-Hash": []string{"crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc="}, "Content-Length": []string{"42"}},
+		ContentLength: 42,
+	}
+
+	got := integrityFromResponse(resp)
+	if got.CRC32C != "9f4df1e8" {
+		t.Errorf("CRC32C = %q, want 9f4df1e8", got.CRC32C)
+	}
+	if got.MD5 != "3a393d737761726520796f75206b696464696e67" {
+		t.Errorf("MD5 = %q, want 3a393d737761726520796f75206b696464696e67", got.MD5)
+	}
+	if got.Size != 42 {
+		t.Errorf("Size = %d, want 42", got.Size)
+	}
+}
+
+// A 206 partial-content response carries the true object size in the
+// Content-Range total plus the X-Goog-Hash digests; ProbeFeedIntegrity must
+// surface both without erroring.
+func TestProbeFeedIntegrity206(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Range", "bytes 0-0/999")
+		w.Header().Set("X-Goog-Hash", "crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	integ, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("ProbeFeedIntegrity: %v", err)
+	}
+	if integ.Size != 999 {
+		t.Errorf("Size = %d, want 999", integ.Size)
+	}
+	if integ.CRC32C != "9f4df1e8" {
+		t.Errorf("CRC32C = %q, want 9f4df1e8", integ.CRC32C)
+	}
+	if integ.MD5 != "3a393d737761726520796f75206b696464696e67" {
+		t.Errorf("MD5 = %q, want 3a393d737761726520796f75206b696464696e67", integ.MD5)
+	}
+}
+
+// Some CDNs/objects ignore the Range header and answer 200 with the full
+// Content-Length; ProbeFeedIntegrity must still resolve integrity from that.
+func TestProbeFeedIntegrity200IgnoresRange(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1234")
+		w.Header().Set("X-Goog-Hash", "crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=")
+		_, _ = w.Write([]byte("full body ignored by probe"))
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	integ, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("ProbeFeedIntegrity: %v", err)
+	}
+	if integ.Size != 1234 {
+		t.Errorf("Size = %d, want 1234", integ.Size)
+	}
+	if integ.CRC32C != "9f4df1e8" {
+		t.Errorf("CRC32C = %q, want 9f4df1e8", integ.CRC32C)
+	}
+}
+
+// A non-2xx status (e.g. 403) is an error; the returned integrity must be the
+// zero value.
+func TestProbeFeedIntegrityNon2xxIsError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	integ, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if integ != (FeedIntegrity{}) {
+		t.Errorf("integ = %+v, want zero value", integ)
+	}
+}
+
+// The probe request must carry Range: bytes=0-0 and the Token on the first
+// hop, and the tiny response body must be fully drained/closed (verified by
+// the server not blocking on a second read).
+func TestProbeFeedIntegrityRequestHeaders(t *testing.T) {
+	t.Parallel()
+
+	var gotRange, gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRange = r.Header.Get("Range")
+		gotToken = r.Header.Get("Token")
+		w.Header().Set("Content-Range", "bytes 0-0/1")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	if _, err := client.ProbeFeedIntegrity(context.Background(), "anonymous", "", FeedJSONGzip); err != nil {
+		t.Fatalf("ProbeFeedIntegrity: %v", err)
+	}
+	if gotRange != "bytes=0-0" {
+		t.Errorf("Range header = %q, want bytes=0-0", gotRange)
+	}
+	if gotToken != "secret" {
+		t.Errorf("Token header = %q, want secret", gotToken)
+	}
+}
+
+// An empty feed type must error before any network call.
+func TestProbeFeedIntegrityRequiresType(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("network call made for empty feed type")
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	if _, err := client.ProbeFeedIntegrity(context.Background(), "  ", "", FeedJSONGzip); err == nil {
+		t.Fatal("empty feed type = nil error, want error")
+	}
 }
 
 func TestLookupFeedType(t *testing.T) {

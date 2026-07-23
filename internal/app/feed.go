@@ -3,7 +3,11 @@ package app
 import (
 	"compress/gzip"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"hash"
+	"hash/crc32"
 	"io"
 	"os"
 	"strings"
@@ -61,11 +65,12 @@ func newFeedStatusCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:     "status <type>",
 		Aliases: []string{"metadata"},
-		Short:   "Show a feed's current metadata (date, timestamps, filesize)",
+		Short:   "Show a feed's current metadata (date, timestamps, filesize, checksums)",
 		Long: "Fetch the metadata document for a Spur data feed and report the " +
 			"current file's date, when it was generated and made available, its " +
-			"relative location, and its size. Run `spur feed list` for the feed " +
-			"types you can pass.\n\n" +
+			"relative location, its size, and its checksums (CRC32C/MD5) as " +
+			"reported by the CDN. Run `spur feed list` for the feed types you can " +
+			"pass.\n\n" +
 			"Output is a styled report at a terminal and JSON when piped or " +
 			"redirected; use --format to override.\n\n" +
 			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
@@ -87,6 +92,7 @@ func newFeedStatusCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			attachFeedDigests(cmd.Context(), client, feedType.Name, &md)
 			return of.emit(cmd, md)
 		},
 	}
@@ -107,6 +113,7 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 		asJSON     bool
 		decompress bool
 		silent     bool
+		verify     bool
 	)
 	cmd := &cobra.Command{
 		Use:   "download <type>",
@@ -131,6 +138,10 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			"Download progress is shown on stderr at a terminal and suppressed with " +
 			"--silent or when stderr is not a terminal, so stdout stays a clean data " +
 			"channel.\n\n" +
+			"After the download, a size and checksum (CRC32C/MD5) summary as reported " +
+			"by the CDN is printed to stderr, unless --silent. Pass --verify to hash " +
+			"the downloaded bytes as they arrive and compare them to that reported " +
+			"checksum, failing the command on a mismatch.\n\n" +
 			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
 			"then the OS keychain; run `spur auth` to store one.",
 		Args: cobra.ExactArgs(1),
@@ -166,15 +177,31 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			// never gzip.)
 			expand := of.toStdout() || decompress
 
+			// When the feed data itself is streaming to an interactive terminal
+			// (no -o), the self-overwriting progress bar collides with the data
+			// scrolling past on the same screen. Suppress it in that case; the
+			// data is the output the user asked for. Piping or -o keeps stdout
+			// clean, so the bar is safe and useful there.
+			dataToTerminal := of.toStdout() && output.IsTerminal(cmd.OutOrStdout())
+
 			// Progress is a diagnostic: stderr only, and only when a human is
-			// watching. It never touches the stdout data channel.
+			// watching and the data channel isn't the same terminal. It never
+			// touches the stdout data channel.
 			var progress *progressLine
-			if !silent && output.IsTerminal(os.Stderr) {
+			if showDownloadProgress(silent, dataToTerminal, output.IsTerminal(os.Stderr)) {
 				w := cmd.ErrOrStderr()
 				progress = newProgressLine(w, of.colorEnabled(w), "Downloading "+slug)
 			}
 
-			return downloadFeed(cmd.Context(), client, slug, date, format, of.sink(cmd), expand, progress)
+			// The integrity summary is a diagnostic like progress, but unlike
+			// progress it is shown whenever a human isn't opting out with
+			// --silent, even when stderr is piped (CI logs still want it).
+			var summary io.Writer
+			if !silent {
+				summary = cmd.ErrOrStderr()
+			}
+
+			return downloadFeed(cmd.Context(), client, slug, date, format, of.sink(cmd), expand, progress, verify, summary)
 		},
 	}
 	cmd.Flags().StringVar(&date, "date", "", "download a historical release for this date (YYYYMMDD) instead of the latest")
@@ -184,7 +211,18 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "download the newline-JSON gzip artifact (overrides the ipgeo MMDB default)")
 	cmd.Flags().BoolVar(&decompress, "decompress", false, "decompress the gzip when writing JSON to a file (-o); stdout JSON is always decompressed")
 	cmd.Flags().BoolVar(&silent, "silent", false, "suppress the download progress indicator")
+	cmd.Flags().BoolVar(&verify, "verify", false, "hash the downloaded bytes and verify them against the CDN-reported checksum (crc32c/md5); a mismatch fails the command but a partially-written -o file is left in place")
 	return cmd
+}
+
+// showDownloadProgress decides whether to draw the download progress bar. It is
+// shown only when a human is watching stderr (stderrIsTerminal), the user has
+// not opted out (--silent), and the feed data is not itself streaming to the
+// same interactive terminal (dataToTerminal) — where the self-overwriting bar
+// would collide with the data scrolling past. Piping the data or writing it to
+// a file (-o) keeps stdout clean, so the bar is safe and useful there.
+func showDownloadProgress(silent, dataToTerminal, stderrIsTerminal bool) bool {
+	return !silent && !dataToTerminal && stderrIsTerminal
 }
 
 // resolveDownloadFormat picks the artifact format from the explicit flags,
@@ -246,7 +284,20 @@ func resolveDownloadSlug(arg string, ipv6, realtime bool) (string, error) {
 // progress, when non-nil, receives a self-overwriting progress bar; the
 // counter wraps the transfer stream so it tracks bytes downloaded against the
 // CDN's Content-Length.
-func downloadFeed(ctx context.Context, client *spur.Client, feedType, date string, format spur.FeedFormat, openSink func() (io.Writer, func() error, error), expand bool, progress *progressLine) error {
+//
+// When verify is true the RAW bytes as received from the CDN (before any
+// progress wrapping or gzip decompression) are hashed with CRC32C and MD5 and
+// compared against the CDN-reported digests (x-goog-hash, surfaced as
+// integ.CRC32C/integ.MD5) once the transfer completes; a mismatch, or a
+// request to verify against a response that reported no digest at all, fails
+// the command. summary, when non-nil, receives a one-line size/checksum
+// report (as reported by the CDN, regardless of verify) plus a second line
+// noting which digests were verified when verify is true.
+func downloadFeed(
+	ctx context.Context, client *spur.Client, feedType, date string, format spur.FeedFormat,
+	openSink func() (io.Writer, func() error, error), expand bool, progress *progressLine,
+	verify bool, summary io.Writer,
+) error {
 	if format == spur.FeedMMDB {
 		md, err := fetchFeedMetadata(ctx, client, feedType)
 		if err != nil {
@@ -257,7 +308,7 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 		}
 	}
 
-	body, size, err := client.DownloadFeed(ctx, feedType, date, format)
+	body, integ, err := client.DownloadFeed(ctx, feedType, date, format)
 	if err != nil {
 		return collapseAPIError(err, map[error]string{
 			spur.ErrForbidden: fmt.Sprintf("access to the %q feed is denied: your token's subscription does not include it", feedType),
@@ -266,9 +317,22 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 	defer func() { _ = body.Close() }()
 
 	var src io.Reader = body
+
+	// Hash the RAW bytes as received from the CDN: x-goog-hash is computed
+	// over the stored object (.json.gz/.mmdb), so this tee must sit before
+	// both the progress wrapper and any gzip decompression, or it would hash
+	// the wrong bytes.
+	var crc32cHash hash.Hash32
+	var md5Hash hash.Hash
+	if verify {
+		crc32cHash = crc32.New(crc32.MakeTable(crc32.Castagnoli))
+		md5Hash = md5.New()
+		src = io.TeeReader(src, io.MultiWriter(crc32cHash, md5Hash))
+	}
+
 	var prog *progressReader
 	if progress != nil {
-		prog = newProgressReader(src, progress, size)
+		prog = newProgressReader(src, progress, integ.Size)
 		src = prog
 	}
 
@@ -296,7 +360,85 @@ func downloadFeed(ctx context.Context, client *spur.Client, feedType, date strin
 	if prog != nil {
 		prog.Finish()
 	}
+
+	if verify {
+		if err := verifyFeedIntegrity(integ, crc32cHash, md5Hash); err != nil {
+			return err
+		}
+	}
+
+	if summary != nil {
+		writeFeedIntegritySummary(summary, integ, verify)
+	}
 	return nil
+}
+
+// verifyFeedIntegrity compares the locally-computed CRC32C/MD5 digests
+// (lowercase hex, matching the stored/displayed FeedIntegrity representation)
+// against the CDN-reported ones in integ, checking only the digests the CDN
+// actually reported. A caller that asked to verify against a response
+// reporting neither digest gets a clear error rather than a silent no-op.
+func verifyFeedIntegrity(integ spur.FeedIntegrity, crc32cHash hash.Hash32, md5Hash hash.Hash) error {
+	if integ.CRC32C == "" && integ.MD5 == "" {
+		return fmt.Errorf("--verify requested but the CDN did not report a checksum to verify against")
+	}
+	if integ.CRC32C != "" {
+		if got := fmt.Sprintf("%08x", crc32cHash.Sum32()); got != integ.CRC32C {
+			return fmt.Errorf("feed integrity check failed: crc32c mismatch (expected %s, got %s)", integ.CRC32C, got)
+		}
+	}
+	if integ.MD5 != "" {
+		if got := hex.EncodeToString(md5Hash.Sum(nil)); got != integ.MD5 {
+			return fmt.Errorf("feed integrity check failed: md5 mismatch (expected %s, got %s)", integ.MD5, got)
+		}
+	}
+	return nil
+}
+
+// writeFeedIntegritySummary prints a one-line size/checksum report as
+// reported by the CDN (regardless of whether verify ran), and, when verified
+// is true, a second line naming which digests were checked.
+func writeFeedIntegritySummary(w io.Writer, integ spur.FeedIntegrity, verified bool) {
+	parts := []string{sizeSummary(integ.Size)}
+	var checked []string
+	if integ.CRC32C != "" {
+		parts = append(parts, "crc32c="+integ.CRC32C)
+		checked = append(checked, "crc32c")
+	}
+	if integ.MD5 != "" {
+		parts = append(parts, "md5="+integ.MD5)
+		checked = append(checked, "md5")
+	}
+	fmt.Fprintln(w, strings.Join(parts, "  "))
+	if verified {
+		fmt.Fprintf(w, "integrity verified (%s)\n", strings.Join(checked, ", "))
+	}
+}
+
+// sizeSummary renders integ.Size for the summary line: "size=unknown" when
+// the CDN did not report a size (-1), else the byte count.
+func sizeSummary(size int64) string {
+	if size < 0 {
+		return "size=unknown"
+	}
+	return fmt.Sprintf("size=%d bytes", size)
+}
+
+// attachFeedDigests best-effort populates the CRC32C/MD5 of each artifact in
+// md by probing the CDN with ProbeFeedIntegrity. The metadata document itself
+// never carries these digests; this is a client-side probe of the artifact
+// (accepted tradeoff: one extra request per artifact). A probe failure leaves
+// that artifact's digests empty and is otherwise ignored — it never fails the
+// status command.
+func attachFeedDigests(ctx context.Context, client *spur.Client, feedType string, md *spur.FeedMetadata) {
+	if integ, err := client.ProbeFeedIntegrity(ctx, feedType, "", spur.FeedJSONGzip); err == nil {
+		md.JSON.CRC32C, md.JSON.MD5 = integ.CRC32C, integ.MD5
+	}
+	if md.MMDB != nil {
+		if integ, err := client.ProbeFeedIntegrity(ctx, feedType, "", spur.FeedMMDB); err == nil {
+			md.MMDB.CRC32C, md.MMDB.MD5 = integ.CRC32C, integ.MD5
+		}
+	}
 }
 
 // fetchFeedMetadata calls the client and collapses an API failure to a clear

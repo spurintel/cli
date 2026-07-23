@@ -142,6 +142,8 @@ func writeFeedTypesCSV(cw *csv.Writer, types []spur.FeedType) error {
 // requested feed type, then the JSON and MMDB file fields. MMDB columns are
 // empty when the feed is not offered in that format, and filesize is empty when
 // absent (the realtime feed) so a scripted reader can tell "unknown" from zero.
+// crc32c/md5 are populated only when the status command's best-effort CDN
+// probe succeeded; they are empty otherwise.
 var feedMetadataCSVHeader = []string{
 	"feedType",
 	"json.date",
@@ -149,11 +151,15 @@ var feedMetadataCSVHeader = []string{
 	"json.generatedAt",
 	"json.availableAt",
 	"json.filesize",
+	"json.crc32c",
+	"json.md5",
 	"mmdb.date",
 	"mmdb.location",
 	"mmdb.generatedAt",
 	"mmdb.availableAt",
 	"mmdb.filesize",
+	"mmdb.crc32c",
+	"mmdb.md5",
 }
 
 func writeFeedMetadataCSV(cw *csv.Writer, md spur.FeedMetadata) error {
@@ -173,15 +179,16 @@ func writeFeedMetadataCSV(cw *csv.Writer, md spur.FeedMetadata) error {
 	return cw.Error()
 }
 
-// feedFileCSVFields renders one FeedFile as its five columns. A zero filesize
+// feedFileCSVFields renders one FeedFile as its seven columns. A zero filesize
 // (absent on the realtime feed, and on an empty MMDB container) emits an empty
-// cell rather than "0".
+// cell rather than "0"; CRC32C/MD5 are empty unless the CDN probe populated
+// them.
 func feedFileCSVFields(f spur.FeedFile) []string {
 	filesize := ""
 	if f.Filesize > 0 {
 		filesize = strconv.FormatInt(f.Filesize, 10)
 	}
-	return []string{f.Date, f.Location, f.GeneratedAt, f.AvailableAt, filesize}
+	return []string{f.Date, f.Location, f.GeneratedAt, f.AvailableAt, filesize, f.CRC32C, f.MD5}
 }
 
 // ipContextCSVHeader is the column order shared by the single-value and batch

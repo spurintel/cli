@@ -2,11 +2,14 @@ package spur
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -136,38 +139,162 @@ func (c *Client) GetFeedMetadata(ctx context.Context, feedType string) (FeedMeta
 // third-party CDN (Go's default policy strips Authorization/Cookie but not a
 // custom header). The returned body is the raw artifact stream (gzip for JSON,
 // an uncompressed MaxMind DB for MMDB); the caller owns it and must Close it.
-// size is the CDN's Content-Length, or -1 when unknown.
+// integ is the CDN's size/CRC32C/MD5, per integrityFromResponse.
 //
 // Unlike the JSON methods this does not buffer or size-limit the body: feeds are
 // hundreds of megabytes and must stream. A slow or stuck transfer is bounded by
 // ctx, not a client timeout. DownloadFeed does not check that feedType offers
 // the requested format — callers that need a clear "not offered" error should
 // consult GetFeedMetadata (its MMDB container) first.
-func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format FeedFormat) (io.ReadCloser, int64, error) {
+func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format FeedFormat) (io.ReadCloser, FeedIntegrity, error) {
 	feedType = strings.Trim(strings.TrimSpace(feedType), "/")
 	if feedType == "" {
-		return nil, 0, fmt.Errorf("feed type is required")
+		return nil, FeedIntegrity{}, fmt.Errorf("feed type is required")
 	}
 
 	return c.doStream(ctx, c.FeedArtifactURL(feedType, date, format))
 }
 
-// doStream issues an authenticated GET for a large artifact on the download
-// client (no overall timeout, Token stripped on cross-host redirects) and
-// returns the raw body stream plus the Content-Length (-1 when unknown). The
-// caller owns the body and must Close it. It is the shared request path for
-// DownloadFeed and ExportFeed.
-func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, int64, error) {
+// ProbeFeedIntegrity fetches a feed artifact's CDN object-integrity values
+// (size + x-goog-hash CRC32C/MD5) WITHOUT downloading it, via a
+// "Range: bytes=0-0" GET that the CDN answers with a 206 carrying the hash
+// headers and the full size in Content-Range. Uses the same download client
+// and cross-host Token-stripping redirect policy as DownloadFeed. On 206/200
+// it returns integrity from the response headers; a non-2xx status is an
+// error. The (<=1 byte) body is always drained and closed. Callers treat any
+// error as "integrity unavailable" and omit it — this never fails a tool.
+func (c *Client) ProbeFeedIntegrity(ctx context.Context, feedType, date string, format FeedFormat) (FeedIntegrity, error) {
+	feedType = strings.Trim(strings.TrimSpace(feedType), "/")
+	if feedType == "" {
+		return FeedIntegrity{}, fmt.Errorf("feed type is required")
+	}
+
+	endpoint := c.FeedArtifactURL(feedType, date, format)
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, 0, err
+		return FeedIntegrity{}, err
+	}
+	req.Header.Set("Token", c.Token)
+	req.Header.Set("User-Agent", c.userAgent())
+	req.Header.Set("Range", "bytes=0-0")
+
+	resp, err := c.downloadHTTPClient().Do(req)
+	if err != nil {
+		return FeedIntegrity{}, err
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
+		_ = resp.Body.Close()
+	}()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return FeedIntegrity{}, newAPIError(resp.StatusCode)
+	}
+
+	return integrityFromResponse(resp), nil
+}
+
+// parseGoogHash extracts the crc32c and md5 digests from the raw values of an
+// X-Goog-Hash response header. Each element of values may itself be a
+// comma-joined list (crc32c=..,md5=..), which is how GCS emits the header when
+// both digests are present; multiple separate header lines are also accepted.
+// Unknown keys are ignored; a missing digest returns "" for that return value.
+func parseGoogHash(values []string) (crc32c, md5 string) {
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			switch {
+			case strings.HasPrefix(part, "crc32c="):
+				crc32c = strings.TrimSpace(strings.TrimPrefix(part, "crc32c="))
+			case strings.HasPrefix(part, "md5="):
+				md5 = strings.TrimSpace(strings.TrimPrefix(part, "md5="))
+			}
+		}
+	}
+	return crc32c, md5
+}
+
+// integrityFromResponse derives a FeedIntegrity from a download response's
+// headers. Size prefers the total from a Content-Range header (present on
+// partial-content responses, where Content-Length reflects only the returned
+// range) and falls back to Content-Length, else -1 when neither is available.
+// CRC32C/MD5 come from X-Goog-Hash via parseGoogHash, base64-decoded and
+// re-encoded as lowercase hex — the header itself is always base64 (that's
+// what GCS sends), but everything downstream of this function stores/displays
+// the digest as hex for readability.
+func integrityFromResponse(resp *http.Response) FeedIntegrity {
+	crc32c, md5 := parseGoogHash(resp.Header.Values("X-Goog-Hash"))
+	return FeedIntegrity{
+		Size:   sizeFromResponse(resp),
+		CRC32C: b64ToHex(crc32c),
+		MD5:    b64ToHex(md5),
+	}
+}
+
+// b64ToHex decodes a standard-base64 digest (as X-Goog-Hash carries it) to
+// lowercase hex. An empty input or a decode failure returns "" — best-effort,
+// never an error — so a malformed or absent digest just yields an absent one.
+func b64ToHex(s string) string {
+	if s == "" {
+		return ""
+	}
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(raw)
+}
+
+// sizeFromResponse resolves the object's total size: the Content-Range total
+// when present and parseable, else resp.ContentLength when known, else the raw
+// Content-Length header, else -1.
+func sizeFromResponse(resp *http.Response) int64 {
+	if total, ok := contentRangeTotal(resp.Header.Get("Content-Range")); ok {
+		return total
+	}
+	if resp.ContentLength >= 0 {
+		return resp.ContentLength
+	}
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		if n, err := strconv.ParseInt(cl, 10, 64); err == nil {
+			return n
+		}
+	}
+	return -1
+}
+
+// contentRangeTotal parses the total-length component of a Content-Range
+// header value (bytes 0-0/12345 -> 12345, true). A missing or non-numeric
+// total (e.g. the "*" GCS uses when the size is unknown) reports ok=false.
+func contentRangeTotal(headerValue string) (int64, bool) {
+	idx := strings.LastIndex(headerValue, "/")
+	if idx == -1 || idx == len(headerValue)-1 {
+		return 0, false
+	}
+	total, err := strconv.ParseInt(headerValue[idx+1:], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return total, true
+}
+
+// doStream issues an authenticated GET for a large artifact on the download
+// client (no overall timeout, Token stripped on cross-host redirects) and
+// returns the raw body stream plus its FeedIntegrity (size, CRC32C, MD5) per
+// integrityFromResponse. The caller owns the body and must Close it. It is the
+// shared request path for DownloadFeed and ExportFeed.
+func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, FeedIntegrity, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, FeedIntegrity{}, err
 	}
 	req.Header.Set("Token", c.Token)
 	req.Header.Set("User-Agent", c.userAgent())
 
 	resp, err := c.downloadHTTPClient().Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, FeedIntegrity{}, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -175,10 +302,10 @@ func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, 
 		// upstream error page we deliberately do not surface.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
 		_ = resp.Body.Close()
-		return nil, 0, newAPIError(resp.StatusCode)
+		return nil, FeedIntegrity{}, newAPIError(resp.StatusCode)
 	}
 
-	return resp.Body, resp.ContentLength, nil
+	return resp.Body, integrityFromResponse(resp), nil
 }
 
 // downloadHTTPClient returns an HTTP client tuned for large streaming downloads:
