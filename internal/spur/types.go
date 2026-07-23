@@ -152,6 +152,15 @@ type FeedFile struct {
 	Filesize    int64  `json:"filesize,omitempty" jsonschema:"Size of the feed file in bytes."`
 }
 
+// FeedIntegrity carries the size and content-hash information a feed download
+// response exposes, so callers can verify a streamed artifact against what the
+// CDN claims to have sent without re-deriving header parsing themselves.
+type FeedIntegrity struct {
+	Size   int64  `json:"size" jsonschema:"Object size in bytes from the CDN response (Content-Range total, else Content-Length). -1 when unknown."`
+	CRC32C string `json:"crc32c,omitempty" jsonschema:"Base64 CRC32C (Castagnoli) digest from x-goog-hash, matching gsutil."`
+	MD5    string `json:"md5,omitempty" jsonschema:"Base64 MD5 digest from x-goog-hash. Absent for composite/large objects GCS does not MD5."`
+}
+
 // Meta carries the response headers that accompany a Context API call. It is
 // returned alongside the body so MCP tools can surface quota and result-date
 // information.

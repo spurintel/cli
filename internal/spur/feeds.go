@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -150,6 +151,73 @@ func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format
 	}
 
 	return c.doStream(ctx, c.FeedArtifactURL(feedType, date, format))
+}
+
+// parseGoogHash extracts the crc32c and md5 digests from the raw values of an
+// X-Goog-Hash response header. Each element of values may itself be a
+// comma-joined list (crc32c=..,md5=..), which is how GCS emits the header when
+// both digests are present; multiple separate header lines are also accepted.
+// Unknown keys are ignored; a missing digest returns "" for that return value.
+func parseGoogHash(values []string) (crc32c, md5 string) {
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			switch {
+			case strings.HasPrefix(part, "crc32c="):
+				crc32c = strings.TrimSpace(strings.TrimPrefix(part, "crc32c="))
+			case strings.HasPrefix(part, "md5="):
+				md5 = strings.TrimSpace(strings.TrimPrefix(part, "md5="))
+			}
+		}
+	}
+	return crc32c, md5
+}
+
+// integrityFromResponse derives a FeedIntegrity from a download response's
+// headers. Size prefers the total from a Content-Range header (present on
+// partial-content responses, where Content-Length reflects only the returned
+// range) and falls back to Content-Length, else -1 when neither is available.
+// CRC32C/MD5 come from X-Goog-Hash via parseGoogHash.
+func integrityFromResponse(resp *http.Response) FeedIntegrity {
+	crc32c, md5 := parseGoogHash(resp.Header.Values("X-Goog-Hash"))
+	return FeedIntegrity{
+		Size:   sizeFromResponse(resp),
+		CRC32C: crc32c,
+		MD5:    md5,
+	}
+}
+
+// sizeFromResponse resolves the object's total size: the Content-Range total
+// when present and parseable, else resp.ContentLength when known, else the raw
+// Content-Length header, else -1.
+func sizeFromResponse(resp *http.Response) int64 {
+	if total, ok := contentRangeTotal(resp.Header.Get("Content-Range")); ok {
+		return total
+	}
+	if resp.ContentLength >= 0 {
+		return resp.ContentLength
+	}
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		if n, err := strconv.ParseInt(cl, 10, 64); err == nil {
+			return n
+		}
+	}
+	return -1
+}
+
+// contentRangeTotal parses the total-length component of a Content-Range
+// header value (bytes 0-0/12345 -> 12345, true). A missing or non-numeric
+// total (e.g. the "*" GCS uses when the size is unknown) reports ok=false.
+func contentRangeTotal(headerValue string) (int64, bool) {
+	idx := strings.LastIndex(headerValue, "/")
+	if idx == -1 || idx == len(headerValue)-1 {
+		return 0, false
+	}
+	total, err := strconv.ParseInt(headerValue[idx+1:], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return total, true
 }
 
 // doStream issues an authenticated GET for a large artifact on the download

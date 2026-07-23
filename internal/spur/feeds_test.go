@@ -339,6 +339,137 @@ func TestDownloadFeedStripsTokenOnRedirect(t *testing.T) {
 	_ = body.Close()
 }
 
+// x-goog-hash may pack both digests into one comma-joined header value;
+// parseGoogHash must split on the comma and recover both.
+func TestParseGoogHashSingleCommaJoinedLine(t *testing.T) {
+	t.Parallel()
+
+	crc32c, md5 := parseGoogHash([]string{"crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc="})
+	if crc32c != "n03x6A==" {
+		t.Errorf("crc32c = %q, want n03x6A==", crc32c)
+	}
+	if md5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("md5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", md5)
+	}
+}
+
+// x-goog-hash may also arrive as multiple separate header lines, one digest
+// per line; parseGoogHash must recover both regardless of ordering.
+func TestParseGoogHashMultipleLines(t *testing.T) {
+	t.Parallel()
+
+	crc32c, md5 := parseGoogHash([]string{"md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=", "crc32c=n03x6A=="})
+	if crc32c != "n03x6A==" {
+		t.Errorf("crc32c = %q, want n03x6A==", crc32c)
+	}
+	if md5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("md5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", md5)
+	}
+}
+
+// Edge cases: only one digest present, an unknown key mixed in, and empty/nil
+// input must all resolve without panicking or leaking the unknown key.
+func TestParseGoogHashEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		values     []string
+		wantCRC32C string
+		wantMD5    string
+	}{
+		{"only crc32c", []string{"crc32c=n03x6A=="}, "n03x6A==", ""},
+		{"only md5", []string{"md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc="}, "", "Ojk9c3dhcmUgeW91IGtpZGRpbmc="},
+		{"unknown key ignored", []string{"crc32c=n03x6A==,goog-generation=17"}, "n03x6A==", ""},
+		{"nil input", nil, "", ""},
+		{"empty slice", []string{}, "", ""},
+		{"empty string element", []string{""}, "", ""},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			crc32c, md5 := parseGoogHash(tc.values)
+			if crc32c != tc.wantCRC32C {
+				t.Errorf("crc32c = %q, want %q", crc32c, tc.wantCRC32C)
+			}
+			if md5 != tc.wantMD5 {
+				t.Errorf("md5 = %q, want %q", md5, tc.wantMD5)
+			}
+		})
+	}
+}
+
+// A 206 partial-content response carries the true object size in the
+// Content-Range total, not the Content-Length of the returned range;
+// integrityFromResponse must prefer the range total.
+func TestIntegrityFromResponsePrefersContentRangeTotal(t *testing.T) {
+	t.Parallel()
+
+	resp := &http.Response{
+		StatusCode:    http.StatusPartialContent,
+		Header:        http.Header{"Content-Range": []string{"bytes 0-0/12345"}, "Content-Length": []string{"1"}},
+		ContentLength: 1,
+	}
+
+	got := integrityFromResponse(resp)
+	if got.Size != 12345 {
+		t.Errorf("Size = %d, want 12345", got.Size)
+	}
+}
+
+// Without a Content-Range header, Size falls back to Content-Length; when
+// neither is usable it reports -1 rather than a misleading zero.
+func TestIntegrityFromResponseSizeFallback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		header        http.Header
+		contentLength int64
+		wantSize      int64
+	}{
+		{"content-length header only", http.Header{"Content-Length": []string{"500"}}, -1, 500},
+		{"resp.ContentLength known", http.Header{}, 500, 500},
+		{"garbage content-length header", http.Header{"Content-Length": []string{"nope"}}, -1, -1},
+		{"missing everything", http.Header{}, -1, -1},
+		{"content-range with unknown total", http.Header{"Content-Range": []string{"bytes 0-0/*"}}, -1, -1},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			resp := &http.Response{Header: tc.header, ContentLength: tc.contentLength}
+			got := integrityFromResponse(resp)
+			if got.Size != tc.wantSize {
+				t.Errorf("Size = %d, want %d", got.Size, tc.wantSize)
+			}
+		})
+	}
+}
+
+// integrityFromResponse must populate CRC32C/MD5 from X-Goog-Hash alongside
+// Size, not just Size alone.
+func TestIntegrityFromResponsePopulatesHashes(t *testing.T) {
+	t.Parallel()
+
+	resp := &http.Response{
+		Header:        http.Header{"X-Goog-Hash": []string{"crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc="}, "Content-Length": []string{"42"}},
+		ContentLength: 42,
+	}
+
+	got := integrityFromResponse(resp)
+	if got.CRC32C != "n03x6A==" {
+		t.Errorf("CRC32C = %q, want n03x6A==", got.CRC32C)
+	}
+	if got.MD5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("MD5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", got.MD5)
+	}
+	if got.Size != 42 {
+		t.Errorf("Size = %d, want 42", got.Size)
+	}
+}
+
 func TestLookupFeedType(t *testing.T) {
 	t.Parallel()
 
