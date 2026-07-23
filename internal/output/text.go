@@ -249,6 +249,8 @@ func renderFeedMetadata(w io.Writer, s Styles, width int, md spur.FeedMetadata) 
 			{"Generated At", f.GeneratedAt},
 			{"Available At", f.AvailableAt},
 			{"Filesize", filesize},
+			{"CRC32C", f.CRC32C},
+			{"MD5", f.MD5},
 		}}
 	}
 

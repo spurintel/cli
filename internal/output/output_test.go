@@ -427,11 +427,15 @@ func sampleFeedMetadata() spur.FeedMetadata {
 			GeneratedAt: "2025-03-24T00:59:41Z",
 			AvailableAt: "2025-03-24T00:59:56Z",
 			Filesize:    89553131,
+			CRC32C:      "n2gEqQ==",
+			MD5:         "XUFAKrxLKna5cZ2REBfFkg==",
 		},
 		MMDB: &spur.FeedFile{
 			Date:     "20250324",
 			Location: "20250324/feed.mmdb",
 			Filesize: 42,
+			CRC32C:   "AAAAAA==",
+			MD5:      "1B2M2Y8AsgTpgAmY7PhCfg==",
 		},
 	}
 }
@@ -456,6 +460,9 @@ func TestRenderFeedMetadataJSON(t *testing.T) {
 	}
 	if got.Type != "anonymous" || got.JSON.Filesize != 89553131 {
 		t.Errorf("decoded feed metadata = %+v", got)
+	}
+	if got.JSON.CRC32C != "n2gEqQ==" || got.JSON.MD5 != "XUFAKrxLKna5cZ2REBfFkg==" {
+		t.Errorf("decoded feed metadata digests = %+v", got.JSON)
 	}
 	// Filesize round-trips as a bare number, not a quoted string.
 	if !strings.Contains(out, `"filesize":89553131`) {
@@ -483,11 +490,20 @@ func TestRenderFeedMetadataCSV(t *testing.T) {
 	if !slices.Contains(header, "json.filesize") {
 		t.Errorf("feed csv header missing json.filesize: %v", header)
 	}
+	if !slices.Contains(header, "json.crc32c") || !slices.Contains(header, "json.md5") {
+		t.Errorf("feed csv header missing json digest columns: %v", header)
+	}
+	if !slices.Contains(header, "mmdb.crc32c") || !slices.Contains(header, "mmdb.md5") {
+		t.Errorf("feed csv header missing mmdb digest columns: %v", header)
+	}
 	if !slices.Contains(row, "89553131") {
 		t.Errorf("feed csv row missing filesize: %v", row)
 	}
 	if !slices.Contains(row, "anonymous") {
 		t.Errorf("feed csv row missing feed type: %v", row)
+	}
+	if !slices.Contains(row, "n2gEqQ==") || !slices.Contains(row, "XUFAKrxLKna5cZ2REBfFkg==") {
+		t.Errorf("feed csv row missing json digests: %v", row)
 	}
 }
 
@@ -517,6 +533,16 @@ func TestRenderFeedMetadataCSVRealtime(t *testing.T) {
 	if row[idx] != "" {
 		t.Errorf("realtime json.filesize = %q, want empty", row[idx])
 	}
+	// No probe ran for this document, so the digest cells stay empty too.
+	for _, col := range []string{"json.crc32c", "json.md5", "mmdb.crc32c", "mmdb.md5"} {
+		idx := slices.Index(records[0], col)
+		if idx < 0 {
+			t.Fatalf("no %s column: %v", col, records[0])
+		}
+		if row[idx] != "" {
+			t.Errorf("realtime %s = %q, want empty", col, row[idx])
+		}
+	}
 }
 
 func TestRenderFeedMetadataTextNoColor(t *testing.T) {
@@ -529,7 +555,7 @@ func TestRenderFeedMetadataTextNoColor(t *testing.T) {
 	if strings.Contains(out, esc) {
 		t.Errorf("--no-color feed text contains ANSI escape codes: %q", out)
 	}
-	for _, want := range []string{"Feed", "anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB"} {
+	for _, want := range []string{"Feed", "anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB", "CRC32C", "n2gEqQ==", "MD5", "XUFAKrxLKna5cZ2REBfFkg=="} {
 		if !strings.Contains(out, want) {
 			t.Errorf("feed text missing %q\n%s", want, out)
 		}

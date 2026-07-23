@@ -66,11 +66,12 @@ func newFeedStatusCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:     "status <type>",
 		Aliases: []string{"metadata"},
-		Short:   "Show a feed's current metadata (date, timestamps, filesize)",
+		Short:   "Show a feed's current metadata (date, timestamps, filesize, checksums)",
 		Long: "Fetch the metadata document for a Spur data feed and report the " +
 			"current file's date, when it was generated and made available, its " +
-			"relative location, and its size. Run `spur feed list` for the feed " +
-			"types you can pass.\n\n" +
+			"relative location, its size, and its checksums (CRC32C/MD5) as " +
+			"reported by the CDN. Run `spur feed list` for the feed types you can " +
+			"pass.\n\n" +
 			"Output is a styled report at a terminal and JSON when piped or " +
 			"redirected; use --format to override.\n\n" +
 			"Authentication resolves a token from SPUR_TOKEN, then the config file, " +
@@ -92,6 +93,7 @@ func newFeedStatusCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			attachFeedDigests(cmd.Context(), client, feedType.Name, &md)
 			return of.emit(cmd, md)
 		},
 	}
@@ -404,6 +406,23 @@ func sizeSummary(size int64) string {
 		return "size=unknown"
 	}
 	return fmt.Sprintf("size=%d bytes", size)
+}
+
+// attachFeedDigests best-effort populates the CRC32C/MD5 of each artifact in
+// md by probing the CDN with ProbeFeedIntegrity. The metadata document itself
+// never carries these digests; this is a client-side probe of the artifact
+// (accepted tradeoff: one extra request per artifact). A probe failure leaves
+// that artifact's digests empty and is otherwise ignored — it never fails the
+// status command.
+func attachFeedDigests(ctx context.Context, client *spur.Client, feedType string, md *spur.FeedMetadata) {
+	if integ, err := client.ProbeFeedIntegrity(ctx, feedType, "", spur.FeedJSONGzip); err == nil {
+		md.JSON.CRC32C, md.JSON.MD5 = integ.CRC32C, integ.MD5
+	}
+	if md.MMDB != nil {
+		if integ, err := client.ProbeFeedIntegrity(ctx, feedType, "", spur.FeedMMDB); err == nil {
+			md.MMDB.CRC32C, md.MMDB.MD5 = integ.CRC32C, integ.MD5
+		}
+	}
 }
 
 // fetchFeedMetadata calls the client and collapses an API failure to a clear

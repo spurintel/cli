@@ -104,6 +104,96 @@ func TestFetchFeedMetadataForbiddenIsClear(t *testing.T) {
 	}
 }
 
+// attachFeedDigests populates JSON.CRC32C/MD5 from a successful probe of the
+// JSON artifact (AC: "populate them via a best-effort ProbeFeedIntegrity per
+// artifact").
+func TestAttachFeedDigestsPopulatesJSON(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte("feed bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/latest.json.gz") {
+			t.Errorf("unexpected probe path %q", r.URL.Path)
+		}
+		w.Header().Set("X-Goog-Hash", googHash(raw))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-0/%d", len(raw)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(raw[:1])
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	md := &spur.FeedMetadata{JSON: spur.FeedFile{Date: "20250324"}}
+	attachFeedDigests(context.Background(), client, "anonymous", md)
+
+	if md.JSON.CRC32C == "" || md.JSON.MD5 == "" {
+		t.Errorf("JSON digests not populated: %+v", md.JSON)
+	}
+}
+
+// attachFeedDigests also probes the MMDB artifact when the metadata reports
+// one, populating its digests independently of the JSON artifact's.
+func TestAttachFeedDigestsPopulatesMMDB(t *testing.T) {
+	t.Parallel()
+
+	jsonRaw := []byte("json bytes")
+	mmdbRaw := []byte("mmdb bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := jsonRaw
+		if strings.HasSuffix(r.URL.Path, "/latest.mmdb") {
+			raw = mmdbRaw
+		}
+		w.Header().Set("X-Goog-Hash", googHash(raw))
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-0/%d", len(raw)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(raw[:1])
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	md := &spur.FeedMetadata{
+		JSON: spur.FeedFile{Date: "20250324"},
+		MMDB: &spur.FeedFile{Date: "20250324"},
+	}
+	attachFeedDigests(context.Background(), client, "ipgeo", md)
+
+	if md.JSON.CRC32C == "" || md.JSON.MD5 == "" {
+		t.Errorf("JSON digests not populated: %+v", md.JSON)
+	}
+	if md.MMDB.CRC32C == "" || md.MMDB.MD5 == "" {
+		t.Errorf("MMDB digests not populated: %+v", md.MMDB)
+	}
+	if md.JSON.CRC32C == md.MMDB.CRC32C {
+		t.Errorf("JSON and MMDB digests should differ (different bytes), both = %q", md.JSON.CRC32C)
+	}
+}
+
+// A probe failure is best-effort: it leaves the artifact's digests empty and
+// never fails the caller (AC: "if the probe fails, render metadata as before
+// with empty digests").
+func TestAttachFeedDigestsProbeFailureLeavesEmpty(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := spur.NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	md := &spur.FeedMetadata{JSON: spur.FeedFile{Date: "20250324"}}
+	attachFeedDigests(context.Background(), client, "anonymous", md)
+
+	if md.JSON.CRC32C != "" || md.JSON.MD5 != "" {
+		t.Errorf("digests should stay empty on probe failure, got %+v", md.JSON)
+	}
+}
+
 // stdout (expand=true) yields decompressed newline-JSON — the default so the
 // output pipes straight into a JSON tool (AC: "streams decompressed newline-JSON
 // to stdout").
