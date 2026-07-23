@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/spurintel/cli/compare/v0.2.1...v0.2.2) (2026-07-23)
+
+
+### Features
+
+* **DEV-762:** surface GCS integrity headers in feed downloads and status tools ([#36](https://github.com/spurintel/cli/issues/36)) ([28855ad](https://github.com/spurintel/cli/commit/28855add75b2e61479a790d5f3999294c1f9136f))
+
 ## [0.2.1](https://github.com/spurintel/cli/compare/v0.2.0...v0.2.1) (2026-07-22)
 
 
