@@ -292,5 +292,6 @@ func (c *Client) ExportFeed(ctx context.Context, slug string, q url.Values) (io.
 	if enc := q.Encode(); enc != "" {
 		endpoint += "?" + enc
 	}
-	return c.doStream(ctx, endpoint)
+	body, integ, err := c.doStream(ctx, endpoint)
+	return body, integ.Size, err
 }

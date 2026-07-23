@@ -168,7 +168,8 @@ func gzipBytes(t *testing.T, plain string) []byte {
 }
 
 // DownloadFeed hits the latest .json.gz path with the Token header and streams
-// the (compressed) body back verbatim, along with the CDN Content-Length.
+// the (compressed) body back verbatim, along with the CDN's integrity (size
+// and X-Goog-Hash digests).
 func TestDownloadFeedStreamsBody(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +183,7 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 			t.Errorf("Token header = %q, want secret", got)
 		}
 		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("X-Goog-Hash", "crc32c=n03x6A==,md5=Ojk9c3dhcmUgeW91IGtpZGRpbmc=")
 		_, _ = w.Write(payload)
 	}))
 	defer srv.Close()
@@ -189,7 +191,7 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 	client := NewClient("secret")
 	client.FeedsBase = srv.URL
 
-	body, size, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	body, integ, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
 	if err != nil {
 		t.Fatalf("DownloadFeed: %v", err)
 	}
@@ -202,8 +204,50 @@ func TestDownloadFeedStreamsBody(t *testing.T) {
 	if !bytes.Equal(got, payload) {
 		t.Errorf("streamed body did not match the served bytes")
 	}
-	if size != int64(len(payload)) {
-		t.Errorf("size = %d, want %d", size, len(payload))
+	if integ.Size != int64(len(payload)) {
+		t.Errorf("integ.Size = %d, want %d", integ.Size, len(payload))
+	}
+	if integ.CRC32C != "n03x6A==" {
+		t.Errorf("integ.CRC32C = %q, want n03x6A==", integ.CRC32C)
+	}
+	if integ.MD5 != "Ojk9c3dhcmUgeW91IGtpZGRpbmc=" {
+		t.Errorf("integ.MD5 = %q, want Ojk9c3dhcmUgeW91IGtpZGRpbmc=", integ.MD5)
+	}
+}
+
+// When the server omits X-Goog-Hash, DownloadFeed still returns the size but
+// leaves both digest fields empty rather than erroring.
+func TestDownloadFeedNoHashHeader(t *testing.T) {
+	t.Parallel()
+
+	payload := gzipBytes(t, `{"ip":"1.2.3.4"}`+"\n")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	client := NewClient("secret")
+	client.FeedsBase = srv.URL
+
+	body, integ, err := client.DownloadFeed(context.Background(), "anonymous", "", FeedJSONGzip)
+	if err != nil {
+		t.Fatalf("DownloadFeed: %v", err)
+	}
+	defer func() { _ = body.Close() }()
+	if _, err := io.ReadAll(body); err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	if integ.Size != int64(len(payload)) {
+		t.Errorf("integ.Size = %d, want %d", integ.Size, len(payload))
+	}
+	if integ.CRC32C != "" {
+		t.Errorf("integ.CRC32C = %q, want empty", integ.CRC32C)
+	}
+	if integ.MD5 != "" {
+		t.Errorf("integ.MD5 = %q, want empty", integ.MD5)
 	}
 }
 

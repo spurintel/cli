@@ -137,17 +137,17 @@ func (c *Client) GetFeedMetadata(ctx context.Context, feedType string) (FeedMeta
 // third-party CDN (Go's default policy strips Authorization/Cookie but not a
 // custom header). The returned body is the raw artifact stream (gzip for JSON,
 // an uncompressed MaxMind DB for MMDB); the caller owns it and must Close it.
-// size is the CDN's Content-Length, or -1 when unknown.
+// integ is the CDN's size/CRC32C/MD5, per integrityFromResponse.
 //
 // Unlike the JSON methods this does not buffer or size-limit the body: feeds are
 // hundreds of megabytes and must stream. A slow or stuck transfer is bounded by
 // ctx, not a client timeout. DownloadFeed does not check that feedType offers
 // the requested format — callers that need a clear "not offered" error should
 // consult GetFeedMetadata (its MMDB container) first.
-func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format FeedFormat) (io.ReadCloser, int64, error) {
+func (c *Client) DownloadFeed(ctx context.Context, feedType, date string, format FeedFormat) (io.ReadCloser, FeedIntegrity, error) {
 	feedType = strings.Trim(strings.TrimSpace(feedType), "/")
 	if feedType == "" {
-		return nil, 0, fmt.Errorf("feed type is required")
+		return nil, FeedIntegrity{}, fmt.Errorf("feed type is required")
 	}
 
 	return c.doStream(ctx, c.FeedArtifactURL(feedType, date, format))
@@ -222,20 +222,20 @@ func contentRangeTotal(headerValue string) (int64, bool) {
 
 // doStream issues an authenticated GET for a large artifact on the download
 // client (no overall timeout, Token stripped on cross-host redirects) and
-// returns the raw body stream plus the Content-Length (-1 when unknown). The
-// caller owns the body and must Close it. It is the shared request path for
-// DownloadFeed and ExportFeed.
-func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, int64, error) {
+// returns the raw body stream plus its FeedIntegrity (size, CRC32C, MD5) per
+// integrityFromResponse. The caller owns the body and must Close it. It is the
+// shared request path for DownloadFeed and ExportFeed.
+func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, FeedIntegrity, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, FeedIntegrity{}, err
 	}
 	req.Header.Set("Token", c.Token)
 	req.Header.Set("User-Agent", c.userAgent())
 
 	resp, err := c.downloadHTTPClient().Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, FeedIntegrity{}, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -243,10 +243,10 @@ func (c *Client) doStream(ctx context.Context, endpoint string) (io.ReadCloser, 
 		// upstream error page we deliberately do not surface.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes))
 		_ = resp.Body.Close()
-		return nil, 0, newAPIError(resp.StatusCode)
+		return nil, FeedIntegrity{}, newAPIError(resp.StatusCode)
 	}
 
-	return resp.Body, resp.ContentLength, nil
+	return resp.Body, integrityFromResponse(resp), nil
 }
 
 // downloadHTTPClient returns an HTTP client tuned for large streaming downloads:
