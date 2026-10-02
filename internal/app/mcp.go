@@ -45,9 +45,8 @@ KEY SEMANTIC RULES (the tool will reject violations)
 
 // newMCPCmd builds `spur mcp`: a stdio Model Context Protocol server that
 // exposes the Spur Context API as MCP tools, resources, and prompts, all backed
-// by the same shared client the rest of the CLI uses. MCP clients launch it via
-// `claude mcp add spur -e SPUR_TOKEN=… -- spur mcp`, so the token is read from
-// the environment.
+// by the same shared client the rest of the CLI uses. Token resolution follows
+// the same environment → config → keychain precedence as other API commands.
 func newMCPCmd(cf *configFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
@@ -77,7 +76,7 @@ func newMCPCmd(cf *configFlags) *cobra.Command {
 
 // runMCPServer constructs the MCP server, registers every Spur tool/resource/
 // prompt against client, and serves stdio until the command context is
-// cancelled (Ctrl-C or the client closing the transport).
+// canceled (Ctrl-C or the client closing the transport).
 func runMCPServer(cmd *cobra.Command, client *spur.Client) error {
 	schemasSub, err := fs.Sub(spur.SchemasFS(), "schemas")
 	if err != nil {

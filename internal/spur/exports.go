@@ -274,7 +274,7 @@ func unsupportedExportFlag(feed ExportFeed, flag string) error {
 // ExportFeed streams a filtered export from the Exports host. slug is the
 // resolved feed slug (including any -ipv6 suffix) and q is the query built by
 // BuildExportQuery. The response is the raw artifact stream — CSV, newline-JSON,
-// or an MaxMind DB, per the output parameter — which the caller owns and must
+// or a MaxMind DB, per the output parameter — which the caller owns and must
 // Close.
 //
 // Like DownloadFeed this does not buffer or size-limit the body: a full export

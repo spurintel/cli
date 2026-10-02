@@ -167,7 +167,9 @@ func feedDownload(ctx context.Context, c *spur.Client, in FeedDownloadInput) (*m
 			return toolError(fmt.Errorf("the %q feed is not offered in MMDB format", feedType.Name), "Request format json instead."), FeedDownloadOutput{}, nil
 		}
 		file = md.MMDB
-		command += " --mmdb"
+		command += " --format mmdb"
+	} else {
+		command += " --format json"
 	}
 	if date != "" {
 		// The metadata document only describes the latest release; its

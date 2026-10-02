@@ -145,7 +145,7 @@ func TestFeedDownloadJSONPopulatesIntegrity(t *testing.T) {
 	if out.File == nil || out.File.Date != "20250324" {
 		t.Errorf("File = %+v, want date 20250324", out.File)
 	}
-	if out.Command != "spur feed download anonymous" {
+	if out.Command != "spur feed download anonymous --format json" {
 		t.Errorf("Command = %q", out.Command)
 	}
 	if out.Integrity == nil || out.Integrity.Size != 999 {

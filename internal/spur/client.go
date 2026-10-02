@@ -19,8 +19,8 @@ const BaseURL = "https://api.spur.us"
 
 const maxResponseBodyBytes int64 = 1 << 20
 
-// Client is a stateless-ish wrapper around net/http. Its only mutable state is
-// the embedded *http.Client; each API method is safe for concurrent use.
+// Client wraps the Spur HTTP endpoints. API methods may run concurrently
+// provided callers do not mutate the client configuration during requests.
 type Client struct {
 	Token string
 	HTTP  *http.Client

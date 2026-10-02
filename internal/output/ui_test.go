@@ -11,9 +11,8 @@ import (
 )
 
 // TestRenderTextWrapsLongValues renders a tag whose description far exceeds
-// the fallback width (100 columns for a non-terminal writer) and checks that
-// the value wraps onto continuation lines that stay inside the width and keep
-// the tree-row prefix, instead of one overlong line breaking the layout.
+// report width and checks that continuation lines stay within 80 columns
+// and align beneath the value column.
 func TestRenderTextWrapsLongValues(t *testing.T) {
 	t.Parallel()
 	long := strings.TrimSpace(strings.Repeat("residential proxy network with global exit pools ", 6))
@@ -27,13 +26,13 @@ func TestRenderTextWrapsLongValues(t *testing.T) {
 
 	descLines := 0
 	for _, line := range strings.Split(out, "\n") {
-		if w := lipgloss.Width(line); w > 100 {
-			t.Errorf("line exceeds the 100-column fallback width (%d): %q", w, line)
+		if w := lipgloss.Width(line); w > 80 {
+			t.Errorf("line exceeds the 80-column report width (%d): %q", w, line)
 		}
 		if strings.Contains(line, "residential proxy network") {
 			descLines++
-			if !strings.HasPrefix(line, "│") {
-				t.Errorf("wrapped description line lost its tree prefix: %q", line)
+			if !strings.HasPrefix(line, "Description         ") && !strings.HasPrefix(line, strings.Repeat(" ", 20)) {
+				t.Errorf("wrapped description line lost its value alignment: %q", line)
 			}
 		}
 	}
@@ -95,6 +94,53 @@ func TestHumanizeBytes(t *testing.T) {
 	} {
 		if got := HumanizeBytes(tc.n); got != tc.want {
 			t.Errorf("HumanizeBytes(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
+func TestReportsShareLayout(t *testing.T) {
+	for name, value := range map[string]any{
+		"context": sampleContext(),
+		"status":  spur.Status{Active: true, QueriesRemaining: 42},
+		"tag":     spur.TagMetadata{Tag: "EXAMPLE_PROXY", Name: "Example"},
+		"feed":    spur.FeedMetadata{Type: "anonymous", JSON: spur.FeedFile{Date: "2026-10-02"}},
+		"catalog": spur.FeedTypes,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := Render(&b, FormatText, false, value); err != nil {
+				t.Fatal(err)
+			}
+			out := b.String()
+			if strings.Contains(out, "SPUR / ") || strings.HasPrefix(out, "\n") {
+				t.Fatalf("redundant header or leading blank line: %s", out)
+			}
+			if strings.ContainsAny(out, "◆├└│") {
+				t.Fatalf("legacy tree formatting: %s", out)
+			}
+			for _, line := range strings.Split(out, "\n") {
+				if lipgloss.Width(line) > 80 {
+					t.Errorf("overlong line: %q", line)
+				}
+			}
+			if name != "catalog" && !strings.Contains(out, "None") {
+				t.Errorf("empty value placeholder missing: %s", out)
+			}
+		})
+	}
+}
+
+func TestReportRowsNarrowWidthAndLongLabels(t *testing.T) {
+	for _, width := range []int{24, 39, 40, 56, 80} {
+		var b strings.Builder
+		s := NewStyles(&bytes.Buffer{}, false)
+		for _, key := range []string{"Description", "anonymous-residential/realtime"} {
+			writeReportRow(&b, s, width, key, strings.Repeat("a long value ", 20))
+		}
+		for _, line := range strings.Split(b.String(), "\n") {
+			if lipgloss.Width(line) > width {
+				t.Errorf("width %d exceeded: %q", width, line)
+			}
 		}
 	}
 }

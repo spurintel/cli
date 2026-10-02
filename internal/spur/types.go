@@ -6,10 +6,9 @@
 // auto-generated MCP tool schemas are self-documenting.
 package spur
 
-// IPContext is the object returned by GET /v2/context/:ip. Optional fields are
-// omitted when null per the upstream schema. Enum-valued string slices carry
-// their allowable values (and inline descriptions) in the field description so
-// they travel with every tool response.
+// IPContext models GET /v2/context/:ip. Missing fields decode to Go zero values;
+// only fields tagged omitempty are omitted when re-encoded. Enum descriptions
+// populate the generated MCP schema.
 type IPContext struct {
 	AI             *AIActivity   `json:"ai,omitempty" jsonschema:"AI activity observed from this IP address. Operator is the AI entity name; types are AGENTIC (AI agent) or CRAWLER (AI crawler)."`
 	AS             ASInfo        `json:"as" jsonschema:"Spur IP GeoBGP autonomous system information (ASN and operator organization)."`
@@ -78,7 +77,8 @@ type TunnelEntry struct {
 // strings ("true"/"false") and the metrics fields as strings, but the live
 // API returns them as bare booleans and numbers. To be robust to either
 // shape we use FlexBool and FlexNumber, which tolerate both during
-// unmarshal and always emit bare booleans / numbers on marshal.
+// unmarshal. Booleans and numeric values marshal as bare JSON values;
+// non-numeric FlexNumber strings remain quoted.
 //
 // Optional fields use pointers so they're omitted from output when absent.
 type TagMetadata struct {

@@ -204,8 +204,8 @@ func TestRenderTextBatch(t *testing.T) {
 			t.Errorf("batch text missing %q\n%s", want, out)
 		}
 	}
-	// Two IP reports means two ◆ headers.
-	if n := strings.Count(out, "◆"); n != 2 {
+	// Each IP report retains its own identity and section set.
+	if n := strings.Count(out, "■ DEVICE ACTIVITY"); n != 2 {
 		t.Errorf("batch text has %d report headers, want 2\n%s", n, out)
 	}
 }
@@ -261,7 +261,7 @@ func TestRenderStatusTextNoColor(t *testing.T) {
 	if strings.Contains(out, esc) {
 		t.Errorf("--no-color status text contains ANSI escape codes: %q", out)
 	}
-	for _, want := range []string{"Token Status", "Active", "active", "Queries Remaining", "12345", "Service Tier", "online"} {
+	for _, want := range []string{"Active", "active", "Queries Remaining", "12345", "Service Tier", "online"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status text missing %q\n%s", want, out)
 		}
@@ -374,7 +374,7 @@ func TestRenderTagTextNoColor(t *testing.T) {
 	if strings.Contains(out, esc) {
 		t.Errorf("--no-color tag text contains ANSI escape codes: %q", out)
 	}
-	for _, want := range []string{"OXYLABS_PROXY", "Oxylabs Proxy", "RESIDENTIAL_PROXY", "Anonymous", "WINDOWS", "HTTP", "Metrics", "123456"} {
+	for _, want := range []string{"OXYLABS_PROXY", "Oxylabs Proxy", "RESIDENTIAL_PROXY", "Anonymous", "WINDOWS", "HTTP", "METRICS", "123456"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("tag text missing %q\n%s", want, out)
 		}
@@ -408,7 +408,7 @@ func TestRenderTagTextNoMetrics(t *testing.T) {
 		t.Fatalf("Render text: %v", err)
 	}
 	out := buf.String()
-	if strings.Contains(out, "Metrics") {
+	if strings.Contains(out, "METRICS") {
 		t.Errorf("tag without metrics should omit the Metrics block\n%s", out)
 	}
 	if !strings.Contains(out, "OXYLABS_PROXY") {
@@ -555,7 +555,7 @@ func TestRenderFeedMetadataTextNoColor(t *testing.T) {
 	if strings.Contains(out, esc) {
 		t.Errorf("--no-color feed text contains ANSI escape codes: %q", out)
 	}
-	for _, want := range []string{"Feed", "anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB", "CRC32C", "9f6804a9", "MD5", "5d41402abc4b2a76b9719d911017c592"} {
+	for _, want := range []string{"anonymous", "20250324", "2025-03-24T00:59:41Z", "MMDB", "MiB", "CRC32C", "9f6804a9", "MD5", "5d41402abc4b2a76b9719d911017c592"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("feed text missing %q\n%s", want, out)
 		}

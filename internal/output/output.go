@@ -2,7 +2,7 @@
 // format and a value and writes it as human-styled text, newline-delimited
 // JSON, or CSV. It is a deep module: callers decide the format and whether
 // color is wanted, and the package hides lipgloss styling, per-entity layout,
-// and the tolerant CSV/JSON encoding behind one call.
+// and CSV/JSON encoding behind one call.
 //
 // The package imports the spur response types it renders; spur stays a pure
 // API client with no presentation dependency, so the direction is output →
@@ -68,9 +68,8 @@ func DefaultFormat(isTTY bool) Format {
 	return FormatJSON
 }
 
-// IsTerminal reports whether w is an interactive terminal. A plain io.Writer
-// (a file, a buffer, a pipe) is not, so this drives both the default-format
-// choice and color suppression.
+// IsTerminal reports whether w exposes a terminal file descriptor. It drives
+// the default-format choice; ColorEnabled separately handles color overrides.
 func IsTerminal(w io.Writer) bool {
 	f, ok := w.(interface{ Fd() uintptr })
 	if !ok {
