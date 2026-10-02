@@ -11,9 +11,7 @@ import (
 	"github.com/spurintel/cli/internal/spur"
 )
 
-// block is a titled group of aligned key/value rows, rendered under a tree
-// connector. The layout mirrors the synthient/cli output package: a ◆ header,
-// then blocks joined by ├ / └ connectors with │-prefixed rows.
+// block groups aligned key/value rows beneath a report section heading.
 type block struct {
 	name   string
 	values []kv
@@ -24,14 +22,13 @@ type kv struct {
 	val any
 }
 
-// renderText writes a styled, aligned report for the values this cut knows how
-// to lay out. Anything else falls back to JSON so the renderer never refuses a
-// value outright; styled layouts are added per entity as commands land.
+// renderText dispatches supported response types to their text layouts. Other
+// values fall back to JSON.
 func renderText(w io.Writer, color bool, v any) error {
 	// Styles and width come from the raw destination; the writes themselves go
 	// through the profile writer, which degrades ANSI to what w supports.
 	s := newStyles(w, color)
-	width := terminalWidth(w)
+	width := min(80, terminalWidth(w))
 	cw := Writer(w, color)
 	switch c := v.(type) {
 	case spur.Status:
@@ -69,73 +66,6 @@ func renderText(w io.Writer, color bool, v any) error {
 	}
 }
 
-func renderIPContext(w io.Writer, s Styles, width int, c spur.IPContext) error {
-	blocks := []block{
-		{name: "Network", values: []kv{
-			{"ASN", c.AS.Number},
-			{"AS Org", c.AS.Organization},
-			{"Organization", c.Organization},
-			{"Infrastructure", c.Infrastructure},
-		}},
-		{name: "Location", values: []kv{
-			{"City", c.Location.City},
-			{"State", c.Location.State},
-			{"Country", c.Location.Country},
-		}},
-		{name: "Client", values: []kv{
-			{"Count", c.Client.Count},
-			{"Countries", c.Client.Countries},
-			{"Spread", c.Client.Spread},
-			{"Types", c.Client.Types},
-			{"Behaviors", c.Client.Behaviors},
-			{"Proxies", c.Client.Proxies},
-		}},
-		{name: "Assessment", values: []kv{
-			{"Risks", c.Risks},
-			{"Services", c.Services},
-		}},
-	}
-
-	if con := c.Client.Concentration; con != nil {
-		blocks = append(blocks, block{name: "Concentration", values: []kv{
-			{"City", con.City},
-			{"State", con.State},
-			{"Country", con.Country},
-			{"Density", con.Density},
-			{"Skew (km)", con.Skew},
-		}})
-	}
-	if ai := c.AI; ai != nil {
-		blocks = append(blocks, block{name: "AI Activity", values: []kv{
-			{"Operator", ai.Operator},
-			{"Types", ai.Types},
-		}})
-	}
-	if len(c.Tunnels) > 0 {
-		tun := block{name: "Tunnels"}
-		for _, t := range c.Tunnels {
-			label := t.Operator
-			if label == "" {
-				label = t.Type
-			}
-			detail := t.Type
-			if t.Anonymous {
-				detail += " (anonymous)"
-			}
-			tun.values = append(tun.values, kv{label, detail})
-		}
-		blocks = append(blocks, tun)
-	}
-
-	var b strings.Builder
-	fmt.Fprintln(&b, s.Title.Render("◆  IP ")+s.Value.Render(c.IP))
-	for i, blk := range blocks {
-		writeBlock(&b, s, width, blk, i+1 == len(blocks))
-	}
-	_, err := io.WriteString(w, b.String())
-	return err
-}
-
 // renderStatus lays out a token-status report: a single block with the active
 // flag (as a colored ●/○ marker), queries remaining, and service tier. The
 // marker uses the Success/Warning palette so a healthy token reads at a glance;
@@ -153,8 +83,7 @@ func renderStatus(w io.Writer, s Styles, width int, st spur.Status) error {
 	}}
 
 	var b strings.Builder
-	fmt.Fprintln(&b, s.Title.Render("◆  Token Status"))
-	writeBlock(&b, s, width, blk, true)
+	writeBlock(&b, s, width, blk)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -208,9 +137,9 @@ func renderTagMetadata(w io.Writer, s Styles, width int, t spur.TagMetadata) err
 	}
 
 	var b strings.Builder
-	fmt.Fprintln(&b, s.Title.Render("◆  Tag ")+s.Value.Render(label))
-	for i, blk := range blocks {
-		writeBlock(&b, s, width, blk, i+1 == len(blocks))
+	writeReportHeader(&b, s, width, label)
+	for _, blk := range blocks {
+		writeBlock(&b, s, width, blk)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -220,14 +149,13 @@ func renderTagMetadata(w io.Writer, s Styles, width int, t spur.TagMetadata) err
 // type as name → description, so `spur feed list` reads as a legible menu at a
 // terminal and stays greppable.
 func renderFeedTypes(w io.Writer, s Styles, width int, types []spur.FeedType) error {
-	blk := block{name: "Feeds"}
+	blk := block{}
 	for _, ft := range types {
 		blk.values = append(blk.values, kv{ft.Name, ft.Description})
 	}
 
 	var b strings.Builder
-	fmt.Fprintln(&b, s.Title.Render("◆  Feed Catalog"))
-	writeBlock(&b, s, width, blk, true)
+	writeBlock(&b, s, width, blk)
 	_, err := io.WriteString(w, b.String())
 	return err
 }
@@ -265,9 +193,9 @@ func renderFeedMetadata(w io.Writer, s Styles, width int, md spur.FeedMetadata) 
 	}
 
 	var b strings.Builder
-	fmt.Fprintln(&b, s.Title.Render("◆  Feed ")+s.Value.Render(label))
-	for i, blk := range blocks {
-		writeBlock(&b, s, width, blk, i+1 == len(blocks))
+	writeReportHeader(&b, s, width, label)
+	for _, blk := range blocks {
+		writeBlock(&b, s, width, blk)
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -288,9 +216,9 @@ func HumanizeBytes(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-// flexBoolValue turns an optional FlexBool into a value formatValue can style:
+// flexBoolValue turns an optional FlexBool into a report value:
 // the underlying bool when the API set the field, or the empty string (a muted
-// "—") when it was absent, so an unset flag never masquerades as a definite
+// "None") when it was absent, so an unset flag never masquerades as a definite
 // "false".
 func flexBoolValue(b *spur.FlexBool) any {
 	if b == nil {
@@ -305,60 +233,62 @@ func flexNumberValue(n spur.FlexNumber) any {
 	return n.String()
 }
 
-// writeBlock renders one block: a connector + name line, then a │-prefixed row
-// per value with keys padded to a common width for alignment. Values longer
-// than the terminal is wide wrap onto continuation lines that stay aligned
-// under the value column, so a long description never breaks the tree layout.
-func writeBlock(b *strings.Builder, s Styles, width int, blk block, final bool) {
-	connector, row := "├", "│"
-	if final {
-		connector, row = "└", " "
-	}
-
-	if blk.name != "" {
-		fmt.Fprintf(b, "%s  %s\n", s.Frame.Render(connector), s.Block.Render(blk.name))
-	}
-
-	keyWidth := 0
-	for _, v := range blk.values {
-		if l := lipgloss.Width(v.key); l > keyWidth {
-			keyWidth = l
-		}
-	}
-	// Row layout: row glyph + 4 spaces + padded key + 2 spaces + value.
-	valueWidth := max(24, width-(1+4+keyWidth+2))
-	continuation := strings.Repeat(" ", keyWidth)
-	for _, v := range blk.values {
-		lines := formatValueLines(s, v.val, valueWidth)
-		for i, line := range lines {
-			key := continuation
-			if i == 0 {
-				key = s.Key.Render(padRight(v.key, keyWidth))
-			}
-			fmt.Fprintf(b, "%s    %s  %s\n", s.Frame.Render(row), key, line)
-		}
+// writeReportHeader identifies the returned entity without repeating the command.
+func writeReportHeader(b *strings.Builder, s Styles, width int, label string) {
+	if label != "" {
+		fmt.Fprintln(b, ansi.Wrap(s.Title.Render(label), max(1, width), ""))
 	}
 }
 
-// preStyled is a value the caller has already rendered to a styled string.
-// formatValueLines emits it verbatim so callers can inject markers with their
-// own color (e.g. the status active/inactive marker) without it being
-// re-wrapped in the default Value style.
+// writeBlock separates sections with whitespace instead of tree connectors.
+func writeBlock(b *strings.Builder, s Styles, width int, blk block) {
+	if b.Len() > 0 {
+		fmt.Fprintln(b)
+	}
+	if blk.name != "" {
+		fmt.Fprintln(b, ansi.Wrap(s.Title.Render("■ "+strings.ToUpper(blk.name)), max(1, width), ""))
+	}
+	indent := 20
+	for _, v := range blk.values {
+		indent = max(indent, ansi.StringWidth(v.key)+2)
+	}
+	for _, v := range blk.values {
+		writeReportRowAt(b, s, width, indent, v.key, v.val)
+	}
+}
+
+// preStyled preserves a caller-provided status marker's semantic color.
 type preStyled string
 
-// formatValueLines renders a field value in a type-appropriate style, wrapped
-// to width, collapsing absent scalars and empty slices to a muted placeholder.
-// Each returned string is one fully styled display line.
-func formatValueLines(s Styles, v any, width int) []string {
-	if pre, ok := v.(preStyled); ok {
-		return []string{string(pre)}
+// reportValue formats text report values. Zero numbers and false booleans stay
+// explicit; empty strings and lists display None.
+func reportValue(s Styles, value any) string {
+	if pre, ok := value.(preStyled); ok {
+		return string(pre)
 	}
-	text, style := valueText(s, v)
-	lines := strings.Split(ansi.Wrap(text, width, ""), "\n")
-	for i, line := range lines {
-		lines[i] = style.Render(line)
+	text, style := valueText(s, value)
+	return style.Render(text)
+}
+
+func writeReportRow(b *strings.Builder, s Styles, width int, key string, value any) {
+	writeReportRowAt(b, s, width, max(20, ansi.StringWidth(key)+2), key, value)
+}
+
+func writeReportRowAt(b *strings.Builder, s Styles, width, indent int, key string, value any) {
+	text := reportValue(s, value)
+	width = max(1, width)
+	if width < indent+20 {
+		fmt.Fprintln(b, ansi.Wrap(s.Empty.UnsetItalic().Render(key), width, ""))
+		fmt.Fprintln(b, ansi.Wrap(text, width, ""))
+		return
 	}
-	return lines
+	for i, line := range strings.Split(ansi.Wrap(text, width-indent, ""), "\n") {
+		label := strings.Repeat(" ", indent)
+		if i == 0 {
+			label = s.Empty.UnsetItalic().Render(padRight(key, indent))
+		}
+		fmt.Fprintln(b, label+line)
+	}
 }
 
 // valueText maps a field value to its display text and style.
@@ -366,7 +296,7 @@ func valueText(s Styles, v any) (string, lipgloss.Style) {
 	switch val := v.(type) {
 	case string:
 		if val == "" {
-			return "—", s.Empty
+			return "None", s.Empty
 		}
 		return val, s.Value
 	case bool:
@@ -377,7 +307,7 @@ func valueText(s Styles, v any) (string, lipgloss.Style) {
 		return formatFloat(val), s.Num
 	case []string:
 		if len(val) == 0 {
-			return "—", s.Empty
+			return "None", s.Empty
 		}
 		return strings.Join(val, ", "), s.Value
 	default:

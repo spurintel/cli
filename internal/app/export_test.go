@@ -14,9 +14,8 @@ import (
 	"github.com/spurintel/cli/internal/spur"
 )
 
-// streamExport carries the Token header, hits /v1/feeds/<slug> with the built
-// query, and streams CSV rows through to the destination (AC: "spur export
-// anonymous --output csv --limit 5 returns CSV rows").
+// streamExport requests /v1/feeds/<slug> with the supplied query and copies CSV
+// rows to the destination, as used by `spur export anonymous --format csv`.
 func TestStreamExportWritesCSV(t *testing.T) {
 	t.Parallel()
 
@@ -46,9 +45,8 @@ func TestStreamExportWritesCSV(t *testing.T) {
 	}
 }
 
-// The mmdb artifact streams through untouched to the destination (AC: "--output
-// mmdb writes a valid MMDB file via -o" — the CLI streams the server's bytes
-// faithfully; producing a valid MMDB is the server's job).
+// With --format mmdb, the CLI copies the server's bytes unchanged. This checks
+// binary preservation; validating the database itself is the server's job.
 func TestStreamExportWritesMMDBBytes(t *testing.T) {
 	t.Parallel()
 

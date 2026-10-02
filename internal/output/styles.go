@@ -25,7 +25,7 @@ type palette struct {
 func newPalette(isDark bool) palette {
 	pick := lipgloss.LightDark(isDark)
 	return palette{
-		accent:     pick(lipgloss.Color("#7C3AED"), lipgloss.Color("#A277FF")),
+		accent:     pick(lipgloss.Color("#4C6500"), lipgloss.Color("#D7FF44")),
 		secondary:  pick(lipgloss.Color("#047857"), lipgloss.Color("#61FFCA")),
 		warm:       pick(lipgloss.Color("#B45309"), lipgloss.Color("#FFCA85")),
 		muted:      pick(lipgloss.Color("#6B7280"), lipgloss.Color("#9A94A8")),
@@ -41,9 +41,7 @@ func newPalette(isDark bool) palette {
 // Writer(w, color).
 type Styles struct {
 	Title   lipgloss.Style // section/report header text
-	Frame   lipgloss.Style // tree connectors (├ │ └)
-	Block   lipgloss.Style // block name
-	Key     lipgloss.Style // field label
+	Frame   lipgloss.Style // progress bar accent
 	Value   lipgloss.Style // field value
 	Empty   lipgloss.Style // placeholder for absent values
 	Bool    lipgloss.Style // boolean values
@@ -54,8 +52,8 @@ type Styles struct {
 
 // NewStyles builds the style palette for output destined for w. w is used
 // only to pick the light or dark color variants: when it is a color-enabled
-// terminal its background is queried; otherwise the dark palette is assumed
-// (nothing colored is shown there anyway).
+// terminal its background is queried; otherwise the dark palette is assumed,
+// including when color is explicitly forced for a non-terminal writer.
 func NewStyles(w io.Writer, color bool) Styles {
 	dark := true
 	if color {
@@ -68,10 +66,8 @@ func NewStyles(w io.Writer, color bool) Styles {
 	return Styles{
 		Title:   lipgloss.NewStyle().Bold(true).Foreground(p.accent),
 		Frame:   lipgloss.NewStyle().Foreground(p.accent),
-		Block:   lipgloss.NewStyle().Bold(true).Foreground(p.warm),
-		Key:     lipgloss.NewStyle().Foreground(p.secondary),
 		Value:   lipgloss.NewStyle().Foreground(p.foreground),
-		Empty:   lipgloss.NewStyle().Foreground(p.muted).Italic(true),
+		Empty:   lipgloss.NewStyle().Foreground(p.muted),
 		Bool:    lipgloss.NewStyle().Foreground(p.warm),
 		Num:     lipgloss.NewStyle().Foreground(p.warm),
 		Success: lipgloss.NewStyle().Foreground(p.secondary),
@@ -99,11 +95,9 @@ func Writer(w io.Writer, color bool) io.Writer {
 	return cw
 }
 
-// ColorEnabled reports whether w should receive ANSI color: an interactive
-// terminal whose environment permits it. Detection honors the NO_COLOR
-// convention (https://no-color.org), CLICOLOR=0, and CLICOLOR_FORCE, and
-// returns no color for a pipe or file. The --no-color flag is applied by the
-// caller on top of this.
+// ColorEnabled reports whether the destination and environment permit ANSI
+// color. Detection honors NO_COLOR, CLICOLOR=0, and CLICOLOR_FORCE; pipes and
+// files are uncolored unless color is forced. The caller applies --no-color.
 func ColorEnabled(w io.Writer) bool {
 	return colorprofile.Detect(w, os.Environ()) > colorprofile.Ascii
 }

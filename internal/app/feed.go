@@ -98,22 +98,21 @@ func newFeedStatusCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	}
 }
 
-// newFeedDownloadCmd builds `spur feed download <type>`: stream a feed's gzip
-// data file from feeds.spur.us. Without -o the body is decompressed to
-// newline-delimited JSON on stdout (so it pipes straight into a JSON tool);
-// with -o the raw gzip is written to the file (add --decompress to expand it).
-// The download bypasses the renderer entirely — it is a byte stream, not a
-// structured value — so --format and --no-color do not apply.
+// newFeedDownloadCmd streams a JSON gzip or MMDB artifact from feeds.spur.us.
+// JSON is decompressed on stdout by default; -o preserves the gzip unless
+// --decompress is set. MMDB bytes are written unchanged. --format selects the
+// artifact; --no-color affects only progress output.
 func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	var (
-		date       string
-		ipv6       bool
-		realtime   bool
-		asMMDB     bool
-		asJSON     bool
-		decompress bool
-		silent     bool
-		verify     bool
+		date           string
+		ipv6           bool
+		realtime       bool
+		artifactFormat string
+		asMMDB         bool
+		asJSON         bool
+		decompress     bool
+		silent         bool
+		verify         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "download <type>",
@@ -123,7 +122,7 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			"automatically.\n\n" +
 			"Feeds are published as newline-delimited JSON (gzip); some are also " +
 			"published as a MaxMind DB (.mmdb). The JSON gzip is the default, except " +
-			"for `ipgeo`, which defaults to MMDB. Use --mmdb or --json to choose " +
+			"for `ipgeo`, which defaults to MMDB. Use --format mmdb or --format json to choose " +
 			"explicitly; whether a feed offers MMDB is reported by `spur feed " +
 			"status`.\n\n" +
 			"For the JSON format the gzip body is decompressed to newline-delimited " +
@@ -156,7 +155,7 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 			if date != "" && strings.HasSuffix(slug, "/realtime") {
 				return fmt.Errorf("--date is not supported for the realtime feed; realtime history is addressed by minute, which this command does not expose")
 			}
-			format, err := resolveDownloadFormat(slug, asMMDB, asJSON)
+			format, err := resolveDownloadFormat(slug, artifactFormat, asMMDB, asJSON)
 			if err != nil {
 				return err
 			}
@@ -207,8 +206,9 @@ func newFeedDownloadCmd(of *outputFlags, cf *configFlags) *cobra.Command {
 	cmd.Flags().StringVar(&date, "date", "", "download a historical release for this date (YYYYMMDD) instead of the latest")
 	cmd.Flags().BoolVar(&ipv6, "ipv6", false, "select the feed's IPv6 variant (e.g. anonymous -> anonymous-ipv6)")
 	cmd.Flags().BoolVar(&realtime, "realtime", false, "select the feed's realtime variant (anonymous-residential only)")
-	cmd.Flags().BoolVar(&asMMDB, "mmdb", false, "download the MaxMind DB (.mmdb) artifact where offered (default for ipgeo)")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "download the newline-JSON gzip artifact (overrides the ipgeo MMDB default)")
+	cmd.Flags().StringVar(&artifactFormat, "format", "", "artifact format: json or mmdb (default: json; ipgeo: mmdb)")
+	cmd.Flags().BoolVar(&asMMDB, "mmdb", false, "alias for --format mmdb")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "alias for --format json")
 	cmd.Flags().BoolVar(&decompress, "decompress", false, "decompress the gzip when writing JSON to a file (-o); stdout JSON is always decompressed")
 	cmd.Flags().BoolVar(&silent, "silent", false, "suppress the download progress indicator")
 	cmd.Flags().BoolVar(&verify, "verify", false, "hash the downloaded bytes and verify them against the CDN-reported checksum (crc32c/md5); a mismatch fails the command but a partially-written -o file is left in place")
@@ -228,9 +228,25 @@ func showDownloadProgress(silent, dataToTerminal, stderrIsTerminal bool) bool {
 // resolveDownloadFormat picks the artifact format from the explicit flags,
 // falling back to a per-feed default: ipgeo is a geolocation database whose
 // primary form is MMDB, so it defaults to MMDB; every other feed defaults to the
-// newline-JSON gzip. --mmdb and --json are mutually exclusive. Whether the feed
+// newline-JSON gzip. Conflicting format selections are rejected. Whether the feed
 // actually offers the chosen format is validated later against its metadata.
-func resolveDownloadFormat(slug string, mmdb, jsonFmt bool) (spur.FeedFormat, error) {
+func resolveDownloadFormat(slug, format string, mmdb, jsonFmt bool) (spur.FeedFormat, error) {
+	switch format {
+	case "":
+	case "json":
+		if mmdb {
+			return 0, fmt.Errorf("--format json conflicts with --mmdb")
+		}
+		jsonFmt = true
+	case "mmdb":
+		if jsonFmt {
+			return 0, fmt.Errorf("--format mmdb conflicts with --json")
+		}
+		mmdb = true
+	default:
+		return 0, fmt.Errorf("invalid download format %q; valid formats: json|mmdb", format)
+	}
+
 	switch {
 	case mmdb && jsonFmt:
 		return 0, fmt.Errorf("--mmdb and --json are mutually exclusive")
@@ -304,7 +320,7 @@ func downloadFeed(
 			return err
 		}
 		if md.MMDB == nil {
-			return fmt.Errorf("the %q feed is not offered in MMDB format; download it as JSON instead (omit --mmdb)", feedType)
+			return fmt.Errorf("the %q feed is not offered in MMDB format; download it as JSON instead (use --format json)", feedType)
 		}
 	}
 

@@ -19,8 +19,8 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Diagnostics go to stderr so stdout stays a clean data channel (the
-	// context command prints JSON there).
+	// Diagnostics go to stderr so stdout contains only the requested command
+	// output, including machine-readable data when piped.
 	slog.SetDefault(newLogger(os.Stderr, parseLogLevel(cfg.LogLevel)))
 
 	return newRootCmd().ExecuteContext(ctx)

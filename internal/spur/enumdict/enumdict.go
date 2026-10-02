@@ -172,7 +172,7 @@ func categoryForPath(path string) (string, bool) {
 		return "", false
 	}
 	parts := strings.Split(path, ".")
-	// Trim any items / [N] artefacts when identifying the owning field.
+	// Trim any items / [N] artifacts when identifying the owning field.
 	var cleaned []string
 	for _, p := range parts {
 		if p == "items" {

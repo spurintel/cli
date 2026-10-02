@@ -11,6 +11,8 @@ import (
 	"hash/crc32"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -370,12 +372,19 @@ func TestResolveDownloadFormat(t *testing.T) {
 
 	tests := []struct {
 		name    string
+		format  string
 		slug    string
 		mmdb    bool
 		asJSON  bool
 		want    spur.FeedFormat
 		wantErr bool
 	}{
+		{name: "format json overrides ipgeo", slug: "ipgeo", format: "json", want: spur.FeedJSONGzip},
+		{name: "format mmdb", slug: "anonymous", format: "mmdb", want: spur.FeedMMDB},
+		{name: "matching alias", slug: "anonymous", format: "json", asJSON: true, want: spur.FeedJSONGzip},
+		{name: "format conflicts mmdb", slug: "anonymous", format: "json", mmdb: true, wantErr: true},
+		{name: "format conflicts json", slug: "anonymous", format: "mmdb", asJSON: true, wantErr: true},
+		{name: "unsupported format", slug: "anonymous", format: "text", wantErr: true},
 		{name: "default json", slug: "anonymous", want: spur.FeedJSONGzip},
 		{name: "ipgeo defaults mmdb", slug: "ipgeo", want: spur.FeedMMDB},
 		{name: "force mmdb", slug: "anonymous", mmdb: true, want: spur.FeedMMDB},
@@ -387,7 +396,7 @@ func TestResolveDownloadFormat(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := resolveDownloadFormat(tc.slug, tc.mmdb, tc.asJSON)
+			got, err := resolveDownloadFormat(tc.slug, tc.format, tc.mmdb, tc.asJSON)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("resolveDownloadFormat(%q, %v, %v) = %v, want error", tc.slug, tc.mmdb, tc.asJSON, got)
@@ -647,5 +656,32 @@ func TestDownloadFeedNoChecksumWithoutVerifySucceeds(t *testing.T) {
 	}
 	if !strings.Contains(summary.String(), fmt.Sprintf("size=%d bytes", len(raw))) {
 		t.Errorf("summary %q should report the size", summary.String())
+	}
+}
+
+func TestFeedDownloadFormatJSONOverridesIPGeoDefault(t *testing.T) {
+	const payload = "{\"ip\":\"192.0.2.1\"}\n"
+	compressed := gzipString(t, payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/ipgeo/latest.json.gz" {
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+		_, _ = w.Write(compressed)
+	}))
+	defer server.Close()
+	t.Setenv("SPUR_TOKEN", "test-token")
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[endpoints]\nfeeds = \""+server.URL+"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	root := newRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetArgs([]string{"--config", path, "feed", "download", "ipgeo", "--format", "json", "--silent"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != payload {
+		t.Fatalf("got %q, want %q", out.String(), payload)
 	}
 }

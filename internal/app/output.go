@@ -10,9 +10,8 @@ import (
 	"github.com/spurintel/cli/internal/output"
 )
 
-// outputFlags backs the root command's persistent output flags. Every command
-// that produces data routes through emit so format, destination, and color are
-// resolved the same way everywhere.
+// outputFlags backs the root command's persistent output flags. Structured
+// reports use emit; feed downloads and exports use sink to stream raw bytes.
 type outputFlags struct {
 	format  string // --format; empty means auto-detect from the destination
 	output  string // --output/-o; "-" or empty means stdout

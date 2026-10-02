@@ -159,7 +159,7 @@ spur feed download anonymous -o anonymous.json.gz   # raw gzip to a file
 spur feed download ipgeo -o ipgeo.mmdb              # ipgeo defaults to MMDB
 ```
 
-Useful flags: `--date YYYYMMDD` for a historical release, `--ipv6` and `--realtime` for a feed's variants, `--mmdb`/`--json` to pick the artifact, `--decompress` to expand the gzip when writing to a file. Download progress goes to stderr, so stdout stays a clean data channel.
+Useful flags: `--date YYYYMMDD` for a historical release, `--ipv6` and `--realtime` for a feed's variants, `--format json|mmdb` to pick the artifact (`--json` and `--mmdb` remain compatibility aliases), `--decompress` to expand the gzip when writing to a file. Download progress goes to stderr, so stdout stays a clean data channel.
 
 ### `spur export` — filtered exports
 
@@ -200,7 +200,9 @@ Reports the build you're running — include it in bug reports.
 
 ## Output formats
 
-Every read command picks its format by where output is going: **styled text at a terminal, newline-delimited JSON when piped or redirected**. `--format text|json|csv` always overrides the auto-choice.
+Structured reports (`context`, `status`, `tag`, `feed list`, and `feed status`) pick their format by where output is going: **styled text at a terminal, newline-delimited JSON when piped or redirected**. `--format text|json|csv` always overrides the auto-choice. Exports use `--format csv|json|mmdb` (default: CSV). Feed downloads use `--format json|mmdb` (default: JSON, except MMDB for `ipgeo`); JSON downloads retain their gzip behavior when saved with `-o`. Across commands, `--output`/`-o` selects the destination file.
+
+Context text reports follow the Spur app’s overview, Proxy & Anonymization Intelligence, Geo Intelligence, and Device Activity sections. All text reports use stacked label/value rows and matching section headings, with long values wrapping within 80 columns or the terminal width. Empty text and lists display `None`; numeric zero values remain `0`. The tunnel badge describes reported tunnel data, not an overall safety verdict.
 
 ```bash
 spur context 1.2.3.4                  # styled report

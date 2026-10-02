@@ -9,8 +9,8 @@ import (
 
 // Keychain identifiers for the stored token. service is the label the OS
 // keychain shows for the item; account distinguishes it within the service.
-// A single token is stored per machine (profiles select tokens from the config
-// file, not the keychain), so a fixed account is sufficient.
+// A single token is stored in the current user's OS keychain. Profiles select
+// tokens from the config file, so the keychain uses a fixed account name.
 const (
 	keychainService = "spur"
 	keychainAccount = "api-token"
